@@ -1,0 +1,15 @@
+github.com/dawidd6/go-appindicator v1.0.1 h1:3+o8txNrFwXfNWgw27vZA/mDOcNawHeoy7q8t6du3NQ=
+github.com/dawidd6/go-appindicator v1.0.1/go.mod h1:SP3MvlW1i7iKIqsj/KO4wY554lXCas/MEoToEY3q3rw=
+github.com/gotk3/gotk3 v0.5.0/go.mod h1:/hqFpkNa9T3JgNAE2fLvCdov7c5bw//FHNZrZ3Uv9/Q=
+github.com/gotk3/gotk3 v0.6.1 h1:GJ400a0ecEEWrzjBvzBzH+pB/esEMIGdB9zPSmBdoeo=
+github.com/gotk3/gotk3 v0.6.1/go.mod h1:/hqFpkNa9T3JgNAE2fLvCdov7c5bw//FHNZrZ3Uv9/Q=
+github.com/gotk3/gotk3 v0.6.2 h1:sx/PjaKfKULJPTPq8p2kn2ZbcNFxpOJqi4VLzMbEOO8=
+github.com/gotk3/gotk3 v0.6.2/go.mod h1:/hqFpkNa9T3JgNAE2fLvCdov7c5bw//FHNZrZ3Uv9/Q=
+github.com/gotk3/gotk3 v0.6.3 h1:+Ke4WkM1TQUNOlM2TZH6szqknqo+zNbX3BZWVXjSHYw=
+github.com/gotk3/gotk3 v0.6.3/go.mod h1:/hqFpkNa9T3JgNAE2fLvCdov7c5bw//FHNZrZ3Uv9/Q=
+github.com/gotk3/gotk3 v0.6.4 h1:5ur/PRr86PwCG8eSj98D1eXvhrNNK6GILS2zq779dCg=
+github.com/gotk3/gotk3 v0.6.4/go.mod h1:/hqFpkNa9T3JgNAE2fLvCdov7c5bw//FHNZrZ3Uv9/Q=
+gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d h1:TxyelI5cVkbREznMhfzycHdkp5cLA7DpE+GKjSslYhM=
+gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d/go.mod h1:cuepJuh7vyXfUyUwEgHQXw849cJrilpS5NeIjOWESAw=
+gopkg.in/ldap.v2 v2.5.1 h1:wiu0okdNfjlBzg6UWvd1Hn8Y+Ux17/u/4nlk4CQr6tU=
+gopkg.in/ldap.v2 v2.5.1/go.mod h1:oI0cpe/D7HRtBQl8aTg+ZmzFUAvu4lsv3eLXMLGFxWk=
