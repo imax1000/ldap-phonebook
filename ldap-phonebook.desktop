@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=LDAP Phonebook (Go)
+Comment=GUI for LDAP phone directory
+Exec=ldap-phonebook-go
+Icon=ldap-phonebook
+Terminal=false
+Type=Application
+Categories=Utility;Office;
+StartupWMClass=ldap-phonebook-go
