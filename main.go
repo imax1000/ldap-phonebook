@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/dawidd6/go-appindicator"
+	"github.com/godbus/dbus/v5"
+	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"gopkg.in/ldap.v2"
@@ -29,22 +31,27 @@ type Config struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "1.0"
+	appVersion  = "0.0.2"
 	defaultIcon = "system-users"
 	configFile  = "ldap-phonebook.json"
 	socketFile  = "/tmp/ldap-phonebook.sock"
 )
 
 type App struct {
-	window      *gtk.Window
-	indicator   *appindicator.Indicator
-	isInTray    bool
-	ldapConn    *ldap.Conn
-	searchEntry *gtk.Entry
-	listStore   *gtk.ListStore
-	config      Config
-	listener    net.Listener
-	builder     *gtk.Builder
+	window        *gtk.Window
+	indicator     *appindicator.Indicator
+	isInTray      bool
+	ldapConn      *ldap.Conn
+	serverEntry   *gtk.Entry
+	bindEntry     *gtk.Entry
+	userEntry     *gtk.Entry
+	passwordEntry *gtk.Entry
+	searchEntry   *gtk.Entry
+	listStore     *gtk.ListStore
+	config        Config
+	listener      net.Listener
+	builder       *gtk.Builder
+	dbusConn      *dbus.Conn
 }
 
 func main() {
@@ -68,8 +75,18 @@ func main() {
 	app.startSocketServer()
 	app.createAppIndicator()
 	app.startSocketServer()
+	app.ldapConnect(false)
+	if app.ldapConn != nil {
+
+		btn, _ := app.getButton("connect_button")
+		btn.SetSensitive(false)
+	}
 
 	gtk.Main()
+
+	if app.dbusConn != nil {
+		app.dbusConn.Close()
+	}
 
 	// Очистка при выходе
 	if app.listener != nil {
@@ -115,10 +132,63 @@ func (app *App) setupUI() {
 		}
 
 		// Получаем остальные элементы
+		app.bindEntry, err = app.getEntry("bind_entry")
+		if err != nil {
+			log.Fatal("Не найден bind_entry:", err)
+		}
+		app.bindEntry.SetText(app.config.BindDN)
+
+		app.serverEntry, err = app.getEntry("server_entry")
+		if err != nil {
+			log.Fatal("Не найден user_entry:", err)
+		}
+		app.serverEntry.SetText(app.config.LDAPServer)
+
+		app.userEntry, err = app.getEntry("user_entry")
+		if err != nil {
+			log.Fatal("Не найден user_entry:", err)
+		}
+		app.userEntry.SetText(app.config.User)
+
+		app.passwordEntry, err = app.getEntry("password_entry")
+		if err != nil {
+			log.Fatal("Не найден password_entry:", err)
+		}
+		app.passwordEntry.SetText(app.config.Password)
+
 		app.searchEntry, err = app.getEntry("search_entry")
 		if err != nil {
-			log.Println("Не найден search_entry:", err)
+			log.Fatal("Не найден search_entry:", err)
 		}
+		app.searchEntry.SetText("t")
+
+		// Получаем TreeView для результатов
+		resultsView, err := app.getTreeView("results_view")
+		if err != nil {
+			log.Fatal("Не удалось получить TreeView:", err)
+		}
+
+		// Создаем модель данных для TreeView
+		app.listStore, err = gtk.ListStoreNew(
+			glib.TYPE_STRING, // ФИО
+			glib.TYPE_STRING, // Должность
+			glib.TYPE_STRING, // Отдел
+			glib.TYPE_STRING, // Телефон
+			glib.TYPE_STRING, // Организация
+		)
+		if err != nil {
+			log.Fatal("Не удалось создать ListStore:", err)
+		}
+
+		// Устанавливаем модель для TreeView
+		resultsView.SetModel(app.listStore)
+
+		// Добавляем колонки
+		app.addColumn(resultsView, "ФИО", 0)
+		app.addColumn(resultsView, "Должность", 1)
+		app.addColumn(resultsView, "Отдел", 2)
+		app.addColumn(resultsView, "Телефон", 3)
+		app.addColumn(resultsView, "Организация", 4)
 
 		// Подключаем сигналы
 		app.builder.ConnectSignals(map[string]interface{}{
@@ -128,7 +198,7 @@ func (app *App) setupUI() {
 		})
 	} else {
 		// Стандартный интерфейс, если Glade не загружен
-		app.createMainWindow()
+		//	app.createMainWindow()
 		//	app.createDefaultUI()
 	}
 
@@ -140,12 +210,13 @@ func (app *App) setupUI() {
 	app.window.ShowAll()
 }
 
-func (app *App) getWindow(name string) (*gtk.Window, error) {
+// Вспомогательные методы для получения виджетов из билдера
+func (app *App) getTreeView(name string) (*gtk.TreeView, error) {
 	obj, err := app.builder.GetObject(name)
 	if err != nil {
 		return nil, err
 	}
-	return obj.(*gtk.Window), nil
+	return obj.(*gtk.TreeView), nil
 }
 
 func (app *App) getEntry(name string) (*gtk.Entry, error) {
@@ -156,6 +227,40 @@ func (app *App) getEntry(name string) (*gtk.Entry, error) {
 	return obj.(*gtk.Entry), nil
 }
 
+func (app *App) getButton(name string) (*gtk.Button, error) {
+	obj, err := app.builder.GetObject(name)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*gtk.Button), nil
+}
+
+func (app *App) getWindow(name string) (*gtk.Window, error) {
+	obj, err := app.builder.GetObject(name)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*gtk.Window), nil
+}
+
+func (app *App) addColumn(treeView *gtk.TreeView, title string, id int) {
+	renderer, err := gtk.CellRendererTextNew()
+	if err != nil {
+		log.Printf("Ошибка создания рендерера для колонки %s: %v\n", title, err)
+		return
+	}
+
+	column, err := gtk.TreeViewColumnNewWithAttribute(title, renderer, "text", id)
+	if err != nil {
+		log.Printf("Ошибка создания колонки %s: %v\n", title, err)
+		return
+	}
+
+	column.SetResizable(true)
+	column.SetSortColumnID(id)
+	treeView.AppendColumn(column)
+}
+
 func (app *App) onWindowDelete() bool {
 	app.minimizeToTray()
 	return true
@@ -163,20 +268,17 @@ func (app *App) onWindowDelete() bool {
 
 func (app *App) onConnectClicked() {
 	// Реализация обработчика кнопки подключения
-}
+	app.config.LDAPServer, _ = app.serverEntry.GetText()
+	app.config.BindDN, _ = app.bindEntry.GetText()
+	app.config.User, _ = app.userEntry.GetText()
+	app.config.Password, _ = app.passwordEntry.GetText()
 
-func (app *App) createDefaultUI() {
-	var err error
-	app.window, err = gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
-	if err != nil {
-		log.Fatal("Не удалось создать окно:", err)
+	app.ldapConnect(true)
+	if app.ldapConn != nil {
+
+		btn, _ := app.getButton("connect_button")
+		btn.SetSensitive(false)
 	}
-
-	box, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 6)
-	app.window.Add(box)
-
-	// Создаем стандартные элементы интерфейса
-	// ... [как в предыдущих примерах] ...
 }
 
 func isInstanceRunning() bool {
@@ -230,7 +332,7 @@ func (app *App) startSocketServer() {
 				continue
 			}
 
-			if string(buf[:n-1]) == "activate\n" {
+			if string(buf[:(n-1)]) == "activate" {
 				glib.IdleAdd(func() bool {
 					app.restoreFromTray()
 					return false
@@ -351,9 +453,9 @@ func (app *App) createUI() {
 	}
 	app.window.Add(box)
 
-	app.createConnectionPanel(box)
-	app.createSearchPanel(box)
-	app.createResultsView(box)
+	// app.createConnectionPanel(box)
+	// app.createSearchPanel(box)
+	// app.createResultsView(box)
 }
 
 func (app *App) createConnectionPanel(box *gtk.Box) {
@@ -462,7 +564,12 @@ func (app *App) createResultsView(box *gtk.Box) {
 	scrolled, _ := gtk.ScrolledWindowNew(nil, nil)
 	box.PackStart(scrolled, true, true, 0)
 
+	if app.listStore != nil {
+		return
+	}
+
 	app.listStore, _ = gtk.ListStoreNew(
+		glib.TYPE_STRING,
 		glib.TYPE_STRING,
 		glib.TYPE_STRING,
 		glib.TYPE_STRING,
@@ -477,6 +584,7 @@ func (app *App) createResultsView(box *gtk.Box) {
 	addColumn(treeView, "Должность", 1)
 	addColumn(treeView, "Отдел", 2)
 	addColumn(treeView, "Телефон", 3)
+	addColumn(treeView, "Орг-я", 4)
 }
 
 func (app *App) onSearchClicked() {
@@ -496,7 +604,7 @@ func (app *App) onSearchClicked() {
 	searchRequest := ldap.NewSearchRequest(
 		app.config.BindDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)))", searchTerm, searchTerm),
+		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)(telephoneNumber=*%s*)))", searchTerm, searchTerm, searchTerm),
 		[]string{"cn", "title", "ou", "telephoneNumber"},
 		nil,
 	)
@@ -519,20 +627,69 @@ func (app *App) onSearchClicked() {
 			[]interface{}{name, title, dept, phone},
 		)
 	}
-
-	app.showMessage(fmt.Sprintf("Найдено %d записей", len(result.Entries)))
+	if len(result.Entries) == 0 {
+		app.showMessage(fmt.Sprintf("Найдено %d записей", len(result.Entries)))
+	}
 }
-
 func (app *App) createAppIndicator() {
 	iconName := defaultIcon
 	if app.config.IconPath != "" {
 		iconName = filepath.Base(app.config.IconPath)
 	}
 
-	app.indicator = appindicator.New(appName, iconName, appindicator.CategoryApplicationStatus)
+	// Пробуем разные имена для индикатора, чтобы избежать конфликтов
+	indicatorNames := []string{
+		appName + "_" + fmt.Sprintf("%d", os.Getpid()),
+		appName,
+	}
+
+	var indicator *appindicator.Indicator
+	var err error
+
+	for _, name := range indicatorNames {
+		indicator = appindicator.New(name, iconName, appindicator.CategoryApplicationStatus)
+		err = app.registerDBusService(name)
+		if err == nil {
+			break
+		}
+		log.Printf("Не удалось зарегистрировать индикатор с именем %s: %v\n", name, err)
+	}
+
+	if err != nil {
+		log.Fatal("Не удалось создать индикатор:", err)
+	}
+
+	app.indicator = indicator
 	app.indicator.SetStatus(appindicator.StatusActive)
 
+	/*
+		// Создаем отдельное окно для обработки событий
+		eventWindow, _ := gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
+		eventWindow.Connect("button-press-event", func(win *gtk.Window, event *gdk.Event) {
+			btnEvent := gdk.EventButtonNewFromEvent(event)
+			if btnEvent.Button() == 1 && btnEvent.Type() == gdk.EVENT_2BUTTON_PRESS {
+				if app.isInTray {
+					app.restoreFromTray()
+				} else {
+					app.minimizeToTray()
+				}
+			}
+		})*/
+
+	// Создаем контекстное меню
 	menu, _ := gtk.MenuNew()
+
+	// Добавляем обработчик двойного клика через меню
+	menu.Connect("button-press-event", func(menu *gtk.Menu, event *gdk.Event) {
+		btnEvent := gdk.EventButtonNewFromEvent(event)
+		if btnEvent.Button() == 1 && btnEvent.Type() == gdk.EVENT_2BUTTON_PRESS {
+			if app.isInTray {
+				app.restoreFromTray()
+			} else {
+				app.minimizeToTray()
+			}
+		}
+	})
 
 	showItem, _ := gtk.MenuItemNewWithLabel("Показать")
 	showItem.Connect("activate", app.restoreFromTray)
@@ -555,7 +712,31 @@ func (app *App) createAppIndicator() {
 	menu.ShowAll()
 	app.indicator.SetMenu(menu)
 }
+func (app *App) registerDBusService(name string) error {
+	if app.dbusConn != nil {
+		app.dbusConn.Close()
+	}
 
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к D-Bus: %v", err)
+	}
+
+	// Освобождаем имя если оно уже занято
+	_, err = conn.ReleaseName("org.kde.StatusNotifierItem." + name)
+	if err != nil {
+		log.Printf("Не удалось освободить имя сервиса: %v\n", err)
+	}
+
+	_, err = conn.RequestName("org.kde.StatusNotifierItem."+name, dbus.NameFlagDoNotQueue)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("не удалось зарегистрировать имя сервиса: %v", err)
+	}
+
+	app.dbusConn = conn
+	return nil
+}
 func (app *App) minimizeToTray() {
 	app.window.Hide()
 	app.isInTray = true
@@ -568,10 +749,10 @@ func (app *App) restoreFromTray() {
 		app.window.Deiconify()
 		app.window.SetKeepAbove(true)
 
-		//	glib.TimeoutAdd(100, func() bool {
-		app.window.SetKeepAbove(false)
-		//		return false
-		//		})
+		glib.TimeoutAdd(100, func() bool {
+			app.window.SetKeepAbove(false)
+			return false
+		})
 
 		app.isInTray = false
 	}
