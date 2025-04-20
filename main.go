@@ -195,6 +195,8 @@ func (app *App) setupUI() {
 			"on_window_delete_event": app.onWindowDelete,
 			"on_connect_clicked":     app.onConnectClicked,
 			"on_search_clicked":      app.onSearchClicked,
+			"on_save_clicked":        app.onSaveClicked,
+			"on_exit_clicked":        app.onExitClicked,
 		})
 	} else {
 		// Стандартный интерфейс, если Glade не загружен
@@ -264,6 +266,25 @@ func (app *App) addColumn(treeView *gtk.TreeView, title string, id int) {
 func (app *App) onWindowDelete() bool {
 	app.minimizeToTray()
 	return true
+}
+func (app *App) onExitClicked() {
+	// Реализация обработчика кнопки
+	if app.listener != nil {
+		app.listener.Close()
+		os.Remove(socketFile)
+	}
+	gtk.MainQuit()
+}
+
+func (app *App) onSaveClicked() {
+	// Реализация обработчика кнопки подключения
+	app.config.LDAPServer, _ = app.serverEntry.GetText()
+	app.config.BindDN, _ = app.bindEntry.GetText()
+	app.config.User, _ = app.userEntry.GetText()
+	app.config.Password, _ = app.passwordEntry.GetText()
+	app.config.DefaultSearch, _ = app.searchEntry.GetText()
+
+	app.saveConfig()
 }
 
 func (app *App) onConnectClicked() {
@@ -700,12 +721,7 @@ func (app *App) createAppIndicator() {
 
 	exitItem, _ := gtk.MenuItemNewWithLabel("Выход")
 	exitItem.Connect("activate", func() {
-		if app.listener != nil {
-			app.listener.Close()
-			os.Remove(socketFile)
-		}
-		app.saveConfig()
-		gtk.MainQuit()
+		app.onExitClicked()
 	})
 	menu.Append(exitItem)
 
