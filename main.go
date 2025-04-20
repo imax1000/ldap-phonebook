@@ -1,15 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/dawidd6/go-appindicator"
 	"github.com/gotk3/gotk3/glib"
@@ -17,11 +15,24 @@ import (
 	"gopkg.in/ldap.v2"
 )
 
+type Config struct {
+	LDAPServer    string `json:"ldap_server"`
+	BindDN        string `json:"bind_dn"`
+	User          string `json:"user"`
+	Password      string `json:"password"`
+	DefaultSearch string `json:"default_search"`
+	WindowWidth   int    `json:"window_width"`
+	WindowHeight  int    `json:"window_height"`
+	IconPath      string `json:"icon_path"`
+	GladeFile     string `json:"glade_file"`
+}
+
 const (
-	appName    = "ldap-phonebook"
-	appVersion = "1.0"
-	lockFile   = "/tmp/ldap-phonebook.lock"
-	socketFile = "/tmp/ldap-phonebook.sock"
+	appName     = "ldap-phonebook"
+	appVersion  = "1.0"
+	defaultIcon = "system-users"
+	configFile  = "ldap-phonebook.json"
+	socketFile  = "/tmp/ldap-phonebook.sock"
 )
 
 type App struct {
@@ -31,107 +42,242 @@ type App struct {
 	ldapConn    *ldap.Conn
 	searchEntry *gtk.Entry
 	listStore   *gtk.ListStore
+	config      Config
+	listener    net.Listener
+	builder     *gtk.Builder
 }
 
 func main() {
-	// Проверка на уже запущенный экземпляр
-	if isAlreadyRunning() {
+	// Проверяем запущен ли уже экземпляр
+	if isInstanceRunning() {
 		log.Println("Приложение уже запущено. Активируем существующее окно...")
 		activateExistingInstance()
 		os.Exit(0)
 	}
 
-	// Создаем lock-файл
-	if err := createLockFile(); err != nil {
-		log.Fatal("Не удалось создать lock-файл:", err)
-	}
-	defer os.Remove(lockFile)
-
 	gtk.Init(&os.Args)
 
 	app := &App{}
-	app.createMainWindow()
+	app.loadConfig()
+
+	if !app.loadGladeUI() {
+		return
+	}
+
+	app.setupUI()
+	app.startSocketServer()
 	app.createAppIndicator()
-	app.setWindowIcon()
+	app.startSocketServer()
 
 	gtk.Main()
+
+	// Очистка при выходе
+	if app.listener != nil {
+		app.listener.Close()
+		os.Remove(socketFile)
+	}
 }
 
-//go:embed ldap-phonebook.png
-var iconData []byte
+func (app *App) loadGladeUI() bool {
+	// Пробуем найти файл Glade в разных местах
+	gladePaths := []string{
+		app.config.GladeFile,
+		filepath.Join("/usr/share", appName, "ui.glade"),
+		filepath.Join(filepath.Dir(os.Args[0]), "ui.glade"),
+	}
 
-func (app *App) setWindowIcon() {
-	// Загрузка из встроенных ресурсов
-	loader, err := gtk.PixbufLoaderNew()
+	var builder *gtk.Builder
+	//	var err error
+
+	for _, path := range gladePaths {
+		if _, err := os.Stat(path); err == nil {
+			builder, err = gtk.BuilderNewFromFile(path)
+			if err == nil {
+				app.builder = builder
+				return true
+			}
+			log.Printf("Ошибка загрузки Glade файла %s: %v\n", path, err)
+		}
+	}
+
+	log.Println("Не удалось загрузить файл интерфейса. Используется стандартный интерфейс.")
+	return false
+}
+
+func (app *App) setupUI() {
+	var err error
+
+	if app.builder != nil {
+		// Загружаем главное окно из Glade
+		app.window, err = app.getWindow("main_window")
+		if err != nil {
+			log.Fatal("Ошибка загрузки главного окна:", err)
+		}
+
+		// Получаем остальные элементы
+		app.searchEntry, err = app.getEntry("search_entry")
+		if err != nil {
+			log.Println("Не найден search_entry:", err)
+		}
+
+		// Подключаем сигналы
+		app.builder.ConnectSignals(map[string]interface{}{
+			"on_window_delete_event": app.onWindowDelete,
+			"on_connect_clicked":     app.onConnectClicked,
+			"on_search_clicked":      app.onSearchClicked,
+		})
+	} else {
+		// Стандартный интерфейс, если Glade не загружен
+		app.createMainWindow()
+		//	app.createDefaultUI()
+	}
+
+	app.window.SetTitle(fmt.Sprintf("LDAP Телефонный Справочник v%s", appVersion))
+	app.window.SetDefaultSize(app.config.WindowWidth, app.config.WindowHeight)
+	app.window.SetPosition(gtk.WIN_POS_CENTER)
+	app.setWindowIcon()
+	app.createAppIndicator()
+	app.window.ShowAll()
+}
+
+func (app *App) getWindow(name string) (*gtk.Window, error) {
+	obj, err := app.builder.GetObject(name)
 	if err != nil {
-		log.Println("Не удалось создать загрузчик иконки:", err)
-		return
+		return nil, err
 	}
-	defer loader.Close()
-
-	if _, err := loader.Write(iconData); err != nil {
-		log.Println("Ошибка загрузки иконки:", err)
-		return
-	}
-
-	if err := loader.Close(); err != nil {
-		log.Println("Ошибка завершения загрузки иконки:", err)
-		return
-	}
-
-	pixbuf := loader.GetPixbuf()
-	if pixbuf != nil {
-		app.window.SetIcon(pixbuf)
-	}
+	return obj.(*gtk.Window), nil
 }
 
-func isAlreadyRunning() bool {
-	if _, err := os.Stat(lockFile); err == nil {
-		// Читаем PID из файла
-		data, err := os.ReadFile(lockFile)
-		if err != nil {
-			return false
-		}
+func (app *App) getEntry(name string) (*gtk.Entry, error) {
+	obj, err := app.builder.GetObject(name)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*gtk.Entry), nil
+}
 
-		pid, err := strconv.Atoi(string(data))
-		if err != nil {
-			return false
-		}
+func (app *App) onWindowDelete() bool {
+	app.minimizeToTray()
+	return true
+}
 
-		// Проверяем существует ли процесс
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			return false
-		}
+func (app *App) onConnectClicked() {
+	// Реализация обработчика кнопки подключения
+}
 
-		// Проверяем что это наш процесс
-		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		if err == nil && strings.Contains(string(cmdline), filepath.Base(os.Args[0])) {
-			return true
-		}
+func (app *App) createDefaultUI() {
+	var err error
+	app.window, err = gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
+	if err != nil {
+		log.Fatal("Не удалось создать окно:", err)
+	}
 
-		// Посылаем сигнал 0 для проверки существования процесса
-		err = process.Signal(syscall.Signal(0))
-		return err == nil
+	box, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 6)
+	app.window.Add(box)
+
+	// Создаем стандартные элементы интерфейса
+	// ... [как в предыдущих примерах] ...
+}
+
+func isInstanceRunning() bool {
+	// Пытаемся подключиться к существующему сокету
+	conn, err := net.Dial("unix", socketFile)
+	if err == nil {
+		conn.Close()
+		return true
 	}
 	return false
 }
 
-func createLockFile() error {
-	file, err := os.Create(lockFile)
+func activateExistingInstance() {
+	conn, err := net.Dial("unix", socketFile)
 	if err != nil {
-		return err
+		log.Println("Ошибка подключения к сокету:", err)
+		return
 	}
-	defer file.Close()
+	defer conn.Close()
 
-	_, err = file.WriteString(fmt.Sprintf("%d", os.Getpid()))
-	return err
+	_, err = conn.Write([]byte("activate\n"))
+	if err != nil {
+		log.Println("Ошибка отправки команды:", err)
+	}
 }
 
-func activateExistingInstance() {
-	// Используем netcat для отправки команды через unix socket
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("echo activate | nc -U %s", socketFile))
-	cmd.Run()
+func (app *App) startSocketServer() {
+	// Удаляем старый сокет если существует
+	os.Remove(socketFile)
+
+	listener, err := net.Listen("unix", socketFile)
+	if err != nil {
+		log.Fatal("Ошибка создания сокета:", err)
+	}
+	app.listener = listener
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if !strings.Contains(err.Error(), "use of closed network connection") {
+					log.Println("Ошибка принятия соединения:", err)
+				}
+				return
+			}
+
+			buf := make([]byte, 1024)
+			n, err := conn.Read(buf)
+			if err != nil {
+				conn.Close()
+				continue
+			}
+
+			if string(buf[:n-1]) == "activate\n" {
+				glib.IdleAdd(func() bool {
+					app.restoreFromTray()
+					return false
+				})
+			}
+
+			conn.Close()
+		}
+	}()
+}
+
+func (app *App) loadConfig() {
+	configPaths := []string{
+		filepath.Join("/etc", configFile),
+		filepath.Join(os.Getenv("HOME"), ".config", appName, configFile),
+		filepath.Join(filepath.Dir(os.Args[0]), configFile),
+	}
+
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				log.Printf("Ошибка чтения конфига %s: %v\n", path, err)
+				continue
+			}
+
+			if err := json.Unmarshal(data, &app.config); err != nil {
+				log.Printf("Ошибка разбора конфига %s: %v\n", path, err)
+				continue
+			}
+
+			log.Printf("Конфигурация загружена из %s\n", path)
+			return
+		}
+	}
+
+	// Значения по умолчанию
+	app.config = Config{
+		LDAPServer:    "localhost",
+		BindDN:        "dc=example,dc=org",
+		User:          "admin",
+		Password:      "123456",
+		DefaultSearch: "",
+		WindowWidth:   800,
+		WindowHeight:  600,
+		IconPath:      "system-users",
+	}
 }
 
 func (app *App) createMainWindow() {
@@ -143,11 +289,11 @@ func (app *App) createMainWindow() {
 	}
 
 	app.window.SetTitle(fmt.Sprintf("LDAP Телефонный Справочник v%s", appVersion))
-	app.window.SetDefaultSize(800, 600)
+	app.window.SetDefaultSize(app.config.WindowWidth, app.config.WindowHeight)
 	app.window.SetPosition(gtk.WIN_POS_CENTER)
-	app.window.SetIconName("system-users")
 
-	// Обработчик закрытия окна (сворачиваем в трей)
+	app.setWindowIcon()
+
 	app.window.Connect("delete-event", func() bool {
 		app.minimizeToTray()
 		return true
@@ -155,44 +301,47 @@ func (app *App) createMainWindow() {
 
 	app.createUI()
 	app.window.ShowAll()
-
-	// Запускаем сервер активации
-	go app.runActivationServer()
 }
 
-func (app *App) runActivationServer() {
-	os.Remove(socketFile)
+func (app *App) setWindowIcon() {
+	// Сначала пробуем загрузить иконку из указанного в конфиге пути
+	/*	if app.config.IconPath != "" {
+			if _, err := os.Stat(app.config.IconPath); err == nil {
+				loader, err := gtk.PixbufLoaderNew()
+				if err != nil {
+					log.Printf("Ошибка создания загрузчика иконки: %v\n", err)
+					goto useDefaultIcon
+				}
+				defer loader.Close()
 
-	listener, err := net.Listen("unix", socketFile)
-	if err != nil {
-		log.Println("Ошибка создания unix socket:", err)
-		return
-	}
-	defer listener.Close()
-	defer os.Remove(socketFile)
+				data, err := os.ReadFile(app.config.IconPath)
+				if err != nil {
+					log.Printf("Ошибка чтения файла иконки: %v\n", err)
+					goto useDefaultIcon
+				}
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
+				if _, err := loader.Write(data); err != nil {
+					log.Printf("Ошибка загрузки данных иконки: %v\n", err)
+					goto useDefaultIcon
+				}
+
+				if err := loader.Close(); err != nil {
+					log.Printf("Ошибка завершения загрузки иконки: %v\n", err)
+					goto useDefaultIcon
+				}
+
+				pixbuf := loader.GetPixbuf()
+				if pixbuf != nil {
+					app.window.SetIcon(pixbuf)
+					return
+				}
+			}
 		}
-
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
-		if err != nil {
-			conn.Close()
-			continue
-		}
-
-		if string(buf[:n-1]) == "activate" {
-			glib.IdleAdd(func() bool {
-				app.restoreFromTray()
-				return false
-			})
-		}
-
-		conn.Close()
-	}
+	*/
+	//useDefaultIcon:
+	// Используем иконку из темы, если не удалось загрузить из файла
+	app.window.SetIconName("system-users")
+	// app.window.SetIconName(defaultIcon)
 }
 
 func (app *App) createUI() {
@@ -219,52 +368,70 @@ func (app *App) createConnectionPanel(box *gtk.Box) {
 		log.Fatal("Не удалось создать сетку:", err)
 	}
 	grid.SetColumnSpacing(6)
-	grid.SetRowSpacing(6)
+	grid.SetRowSpacing(8)
 	grid.SetMarginTop(6)
-	grid.SetMarginBottom(6)
+	grid.SetMarginBottom(8)
 	grid.SetMarginStart(6)
 	grid.SetMarginEnd(6)
 	frame.Add(grid)
 
 	serverEntry, _ := gtk.EntryNew()
-	serverEntry.SetText("localhost:389")
+	serverEntry.SetText(app.config.LDAPServer)
 
 	bindEntry, _ := gtk.EntryNew()
-	bindEntry.SetText("cn=admin,dc=example,dc=org")
+	bindEntry.SetText(app.config.BindDN)
+
+	userEntry, _ := gtk.EntryNew()
+	userEntry.SetText(app.config.User)
 
 	passwordEntry, _ := gtk.EntryNew()
-	passwordEntry.SetText("123456")
+	passwordEntry.SetText(app.config.Password)
 	passwordEntry.SetVisibility(false)
 
 	connectBtn, _ := gtk.ButtonNewWithLabel("Подключиться")
 	connectBtn.Connect("clicked", func() {
-		server, _ := serverEntry.GetText()
-		bindDN, _ := bindEntry.GetText()
-		password, _ := passwordEntry.GetText()
 
-		conn, err := ldap.Dial("tcp", server)
-		if err != nil {
-			app.showError("Ошибка подключения", err.Error())
-			return
-		}
+		app.config.LDAPServer, _ = serverEntry.GetText()
+		app.config.BindDN, _ = bindEntry.GetText()
+		app.config.Password, _ = passwordEntry.GetText()
 
-		err = conn.Bind(bindDN, password)
-		if err != nil {
-			app.showError("Ошибка аутентификации", err.Error())
-			return
-		}
-
-		app.ldapConn = conn
-		app.showMessage("Успешно подключено к LDAP серверу")
+		app.ldapConnect(true)
 	})
+	app.ldapConnect(false)
+	connectBtn.SetSensitive(app.ldapConn == nil)
 
 	grid.Attach(createLabel("Сервер:"), 0, 0, 1, 1)
 	grid.Attach(serverEntry, 1, 0, 1, 1)
-	grid.Attach(createLabel("Учетная запись:"), 0, 1, 1, 1)
+	grid.Attach(createLabel("BaseDN:"), 0, 1, 1, 1)
 	grid.Attach(bindEntry, 1, 1, 1, 1)
-	grid.Attach(createLabel("Пароль:"), 0, 2, 1, 1)
-	grid.Attach(passwordEntry, 1, 2, 1, 1)
-	grid.Attach(connectBtn, 0, 3, 2, 1)
+	grid.Attach(createLabel("Учетная запись:"), 0, 2, 1, 1)
+	grid.Attach(userEntry, 1, 2, 1, 1)
+	grid.Attach(createLabel("Пароль:"), 0, 3, 1, 1)
+	grid.Attach(passwordEntry, 1, 3, 1, 1)
+	grid.Attach(connectBtn, 0, 4, 2, 1)
+}
+func (app *App) ldapConnect(showMessage bool) {
+	server := app.config.LDAPServer
+	bindDN := "cn=" + app.config.User + ", " + app.config.BindDN
+	password := app.config.Password
+
+	conn, err := ldap.Dial("tcp", server)
+	if err != nil {
+		app.showError("Ошибка подключения", err.Error())
+		return
+	}
+
+	err = conn.Bind(bindDN, password)
+	if err != nil {
+		app.showError("Ошибка аутентификации", err.Error())
+		return
+	}
+
+	app.ldapConn = conn
+	if showMessage {
+		app.showMessage("Успешно подключено к LDAP серверу")
+	}
+
 }
 
 func (app *App) createSearchPanel(box *gtk.Box) {
@@ -280,6 +447,9 @@ func (app *App) createSearchPanel(box *gtk.Box) {
 
 	app.searchEntry, _ = gtk.EntryNew()
 	app.searchEntry.SetPlaceholderText("Введите имя или номер")
+	if app.config.DefaultSearch != "" {
+		app.searchEntry.SetText(app.config.DefaultSearch)
+	}
 
 	searchBtn, _ := gtk.ButtonNewWithLabel("Найти")
 	searchBtn.Connect("clicked", app.onSearchClicked)
@@ -316,34 +486,24 @@ func (app *App) onSearchClicked() {
 	}
 
 	searchTerm, _ := app.searchEntry.GetText()
-	//	if searchTerm == "" {
-	//		app.showError("Ошибка", "Введите поисковый запрос")
-	//		return
-	//	}
+	if searchTerm == "" {
+		app.showError("Ошибка", "Введите поисковый запрос")
+		return
+	}
 
 	app.listStore.Clear()
 
-	str := fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)))", searchTerm, searchTerm)
-	//	str = "(objectClass=person)"
 	searchRequest := ldap.NewSearchRequest(
-		"dc=example,dc=org",
+		app.config.BindDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		str,
+		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)))", searchTerm, searchTerm),
 		[]string{"cn", "title", "ou", "telephoneNumber"},
 		nil,
 	)
-	//	searchRequest := ldap.NewSearchRequest(
-	//		"dc=example,dc=com",
-	//		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-	//		fmt.Sprintf("(&(objectClass=user)(|(cn=*%s*)(sn=*%s*)))", searchTerm, searchTerm),
-	//		[]string{"cn", "title", "department", "telephoneNumber"},
-	//		nil,
-	//	)
 
 	result, err := app.ldapConn.Search(searchRequest)
 	if err != nil {
-		str := err.Error()
-		app.showError("Ошибка поиска", str)
+		app.showError("Ошибка поиска", err.Error())
 		return
 	}
 
@@ -364,7 +524,12 @@ func (app *App) onSearchClicked() {
 }
 
 func (app *App) createAppIndicator() {
-	app.indicator = appindicator.New(appName, "system-users", appindicator.CategoryApplicationStatus)
+	iconName := defaultIcon
+	if app.config.IconPath != "" {
+		iconName = filepath.Base(app.config.IconPath)
+	}
+
+	app.indicator = appindicator.New(appName, iconName, appindicator.CategoryApplicationStatus)
 	app.indicator.SetStatus(appindicator.StatusActive)
 
 	menu, _ := gtk.MenuNew()
@@ -378,7 +543,11 @@ func (app *App) createAppIndicator() {
 
 	exitItem, _ := gtk.MenuItemNewWithLabel("Выход")
 	exitItem.Connect("activate", func() {
-		os.Remove(lockFile)
+		if app.listener != nil {
+			app.listener.Close()
+			os.Remove(socketFile)
+		}
+		app.saveConfig()
 		gtk.MainQuit()
 	})
 	menu.Append(exitItem)
@@ -399,14 +568,15 @@ func (app *App) restoreFromTray() {
 		app.window.Deiconify()
 		app.window.SetKeepAbove(true)
 
-		glib.TimeoutAdd(10, func() bool {
-			app.window.SetKeepAbove(false)
-			return false
-		})
+		//	glib.TimeoutAdd(100, func() bool {
+		app.window.SetKeepAbove(false)
+		//		return false
+		//		})
 
 		app.isInTray = false
 	}
 }
+
 func createLabel(text string) *gtk.Label {
 	label, err := gtk.LabelNew(text)
 	if err != nil {
@@ -430,7 +600,7 @@ func (app *App) showError(title, message string) {
 		gtk.DIALOG_MODAL,
 		gtk.MESSAGE_ERROR,
 		gtk.BUTTONS_OK,
-		message,
+		"%s", message,
 	)
 	dialog.SetTitle(title)
 	dialog.Run()
@@ -443,9 +613,23 @@ func (app *App) showMessage(message string) {
 		gtk.DIALOG_MODAL,
 		gtk.MESSAGE_INFO,
 		gtk.BUTTONS_OK,
-		message,
+		"%s", message,
 	)
 	dialog.SetTitle("Сообщение")
 	dialog.Run()
 	dialog.Destroy()
+}
+func (app *App) saveConfig() error {
+	configDir := filepath.Join(os.Getenv("HOME"), ".config", appName)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+
+	configPath := filepath.Join(configDir, configFile)
+	data, err := json.MarshalIndent(app.config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0644)
 }

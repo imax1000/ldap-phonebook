@@ -1,0 +1,11 @@
+{
+  "ldap_server": "localhost:389",
+  "bind_dn": "dc=example,dc=org",
+  "user": "admin",
+  "password": "123456",
+  "default_search": "",
+  "window_width": 800,
+  "window_height": 600,
+  "icon_path": "system-users",
+  "glade_file": "ui.glade"
+}
