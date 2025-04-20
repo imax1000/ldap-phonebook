@@ -31,7 +31,7 @@ type Config struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "1.0"
+	appVersion  = "0.0.2"
 	defaultIcon = "system-users"
 	configFile  = "ldap-phonebook.json"
 	socketFile  = "/tmp/ldap-phonebook.sock"
@@ -604,7 +604,7 @@ func (app *App) onSearchClicked() {
 	searchRequest := ldap.NewSearchRequest(
 		app.config.BindDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)))", searchTerm, searchTerm),
+		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)(telephoneNumber=*%s*)))", searchTerm, searchTerm, searchTerm),
 		[]string{"cn", "title", "ou", "telephoneNumber"},
 		nil,
 	)
@@ -627,8 +627,9 @@ func (app *App) onSearchClicked() {
 			[]interface{}{name, title, dept, phone},
 		)
 	}
-
-	app.showMessage(fmt.Sprintf("Найдено %d записей", len(result.Entries)))
+	if len(result.Entries) == 0 {
+		app.showMessage(fmt.Sprintf("Найдено %d записей", len(result.Entries)))
+	}
 }
 func (app *App) createAppIndicator() {
 	iconName := defaultIcon
