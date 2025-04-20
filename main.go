@@ -3,9 +3,13 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"syscall"
 
 	"github.com/dawidd6/go-appindicator"
 	"github.com/gotk3/gotk3/glib"
@@ -15,9 +19,9 @@ import (
 
 const (
 	appName    = "ldap-phonebook"
-	appID      = "com.example.ldap_phonebook"
 	appVersion = "1.0"
 	lockFile   = "/tmp/ldap-phonebook.lock"
+	socketFile = "/tmp/ldap-phonebook.sock"
 )
 
 type App struct {
@@ -33,8 +37,8 @@ func main() {
 	// Проверка на уже запущенный экземпляр
 	if isAlreadyRunning() {
 		log.Println("Приложение уже запущено. Активируем существующее окно...")
-		//	activateExistingInstance()
-		//		os.Exit(0)
+		activateExistingInstance()
+		os.Exit(0)
 	}
 
 	// Создаем lock-файл
@@ -48,12 +52,40 @@ func main() {
 	app := &App{}
 	app.createMainWindow()
 	app.createAppIndicator()
+	app.setWindowIcon()
 
 	gtk.Main()
 }
 
+//go:embed ldap-phonebook.png
+var iconData []byte
+
+func (app *App) setWindowIcon() {
+	// Загрузка из встроенных ресурсов
+	loader, err := gtk.PixbufLoaderNew()
+	if err != nil {
+		log.Println("Не удалось создать загрузчик иконки:", err)
+		return
+	}
+	defer loader.Close()
+
+	if _, err := loader.Write(iconData); err != nil {
+		log.Println("Ошибка загрузки иконки:", err)
+		return
+	}
+
+	if err := loader.Close(); err != nil {
+		log.Println("Ошибка завершения загрузки иконки:", err)
+		return
+	}
+
+	pixbuf := loader.GetPixbuf()
+	if pixbuf != nil {
+		app.window.SetIcon(pixbuf)
+	}
+}
+
 func isAlreadyRunning() bool {
-	// Проверяем существование lock-файла
 	if _, err := os.Stat(lockFile); err == nil {
 		// Читаем PID из файла
 		data, err := os.ReadFile(lockFile)
@@ -61,12 +93,26 @@ func isAlreadyRunning() bool {
 			return false
 		}
 
-		// Проверяем существует ли процесс с этим PID
-		s := fmt.Sprintf("%s", data)
-		pid, err := strconv.Atoi(s)
-		if _, err := os.FindProcess(int(pid)); err == nil {
+		pid, err := strconv.Atoi(string(data))
+		if err != nil {
+			return false
+		}
+
+		// Проверяем существует ли процесс
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			return false
+		}
+
+		// Проверяем что это наш процесс
+		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err == nil && strings.Contains(string(cmdline), filepath.Base(os.Args[0])) {
 			return true
 		}
+
+		// Посылаем сигнал 0 для проверки существования процесса
+		err = process.Signal(syscall.Signal(0))
+		return err == nil
 	}
 	return false
 }
@@ -83,8 +129,9 @@ func createLockFile() error {
 }
 
 func activateExistingInstance() {
-	cmd := exec.Command(os.Args[0], "--activate")
-	cmd.Start()
+	// Используем netcat для отправки команды через unix socket
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("echo activate | nc -U %s", socketFile))
+	cmd.Run()
 }
 
 func (app *App) createMainWindow() {
@@ -108,6 +155,44 @@ func (app *App) createMainWindow() {
 
 	app.createUI()
 	app.window.ShowAll()
+
+	// Запускаем сервер активации
+	go app.runActivationServer()
+}
+
+func (app *App) runActivationServer() {
+	os.Remove(socketFile)
+
+	listener, err := net.Listen("unix", socketFile)
+	if err != nil {
+		log.Println("Ошибка создания unix socket:", err)
+		return
+	}
+	defer listener.Close()
+	defer os.Remove(socketFile)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != nil {
+			conn.Close()
+			continue
+		}
+
+		if string(buf[:n-1]) == "activate" {
+			glib.IdleAdd(func() bool {
+				app.restoreFromTray()
+				return false
+			})
+		}
+
+		conn.Close()
+	}
 }
 
 func (app *App) createUI() {
@@ -314,7 +399,7 @@ func (app *App) restoreFromTray() {
 		app.window.Deiconify()
 		app.window.SetKeepAbove(true)
 
-		glib.TimeoutAdd(100, func() bool {
+		glib.TimeoutAdd(10, func() bool {
 			app.window.SetKeepAbove(false)
 			return false
 		})
@@ -322,7 +407,6 @@ func (app *App) restoreFromTray() {
 		app.isInTray = false
 	}
 }
-
 func createLabel(text string) *gtk.Label {
 	label, err := gtk.LabelNew(text)
 	if err != nil {
