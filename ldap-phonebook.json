@@ -3,9 +3,9 @@
   "bind_dn": "dc=example,dc=org",
   "user": "admin",
   "password": "123456",
-  "default_search": "",
+  "default_search": "t",
   "window_width": 800,
   "window_height": 600,
   "icon_path": "system-users",
-  "glade_file": "ui.glade"
+  "glade_file": ""
 }
