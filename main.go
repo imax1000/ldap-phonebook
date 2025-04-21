@@ -54,6 +54,21 @@ type App struct {
 	dbusConn      *dbus.Conn
 }
 
+// Employee представляет запись сотрудника в телефонной книге
+type Employee struct {
+	DN           string
+	FullName     string
+	Department   string
+	Organization string
+}
+
+// DepartmentNode представляет узел дерева отделов
+type DepartmentNode struct {
+	Name      string
+	Employees []Employee
+	Children  []*DepartmentNode
+}
+
 func main() {
 	// Проверяем запущен ли уже экземпляр
 	if isInstanceRunning() {
@@ -73,7 +88,7 @@ func main() {
 
 	app.setupUI()
 	app.startSocketServer()
-	app.createAppIndicator()
+	//	app.createAppIndicator()
 	app.startSocketServer()
 	app.ldapConnect(false)
 	if app.ldapConn != nil {
@@ -98,8 +113,8 @@ func main() {
 func (app *App) loadGladeUI() bool {
 	// Пробуем найти файл Glade в разных местах
 	gladePaths := []string{
-		app.config.GladeFile,
-		filepath.Join("/usr/share", appName, "ui.glade"),
+		//		app.config.GladeFile,
+		//		filepath.Join("/usr/share", appName, appName+".glade"),
 		filepath.Join(filepath.Dir(os.Args[0]), "ui.glade"),
 	}
 
@@ -160,7 +175,7 @@ func (app *App) setupUI() {
 		if err != nil {
 			log.Fatal("Не найден search_entry:", err)
 		}
-		app.searchEntry.SetText("t")
+		app.searchEntry.SetText(app.config.DefaultSearch)
 
 		// Получаем TreeView для результатов
 		resultsView, err := app.getTreeView("results_view")
@@ -170,11 +185,13 @@ func (app *App) setupUI() {
 
 		// Создаем модель данных для TreeView
 		app.listStore, err = gtk.ListStoreNew(
-			glib.TYPE_STRING, // ФИО
-			glib.TYPE_STRING, // Должность
-			glib.TYPE_STRING, // Отдел
-			glib.TYPE_STRING, // Телефон
-			glib.TYPE_STRING, // Организация
+			glib.TYPE_BOOLEAN, // Избранное
+			glib.TYPE_STRING,  // ФИО
+			glib.TYPE_STRING,  // Должность
+			glib.TYPE_STRING,  // Должность
+			glib.TYPE_STRING,  // Отдел
+			glib.TYPE_STRING,  // Телефон
+			glib.TYPE_STRING,  // Организация
 		)
 		if err != nil {
 			log.Fatal("Не удалось создать ListStore:", err)
@@ -184,11 +201,13 @@ func (app *App) setupUI() {
 		resultsView.SetModel(app.listStore)
 
 		// Добавляем колонки
-		app.addColumn(resultsView, "ФИО", 0)
-		app.addColumn(resultsView, "Должность", 1)
-		app.addColumn(resultsView, "Отдел", 2)
+		app.addColumn(resultsView, "Избранное", 0)
+		app.addColumn(resultsView, "ФИО", 1)
+		app.addColumn(resultsView, "EMail", 2)
 		app.addColumn(resultsView, "Телефон", 3)
-		app.addColumn(resultsView, "Организация", 4)
+		app.addColumn(resultsView, "Отдел", 4)
+		app.addColumn(resultsView, "Должность", 5)
+		app.addColumn(resultsView, "Организация", 6)
 
 		// Подключаем сигналы
 		app.builder.ConnectSignals(map[string]interface{}{
@@ -353,7 +372,7 @@ func (app *App) startSocketServer() {
 				continue
 			}
 
-			if string(buf[:(n-1)]) == "activate" {
+			if string(buf[:n]) == "activate\n" {
 				glib.IdleAdd(func() bool {
 					app.restoreFromTray()
 					return false
@@ -626,7 +645,7 @@ func (app *App) onSearchClicked() {
 		app.config.BindDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		fmt.Sprintf("(&(objectClass=person)(|(cn=*%s*)(sn=*%s*)(telephoneNumber=*%s*)))", searchTerm, searchTerm, searchTerm),
-		[]string{"cn", "title", "ou", "telephoneNumber"},
+		[]string{"cn", "mail", "o", "title", "ou", "telephoneNumber"},
 		nil,
 	)
 
@@ -638,14 +657,17 @@ func (app *App) onSearchClicked() {
 
 	for _, entry := range result.Entries {
 		name := entry.GetAttributeValue("cn")
+		mail := entry.GetAttributeValue("mail")
+		org := entry.GetAttributeValue("o")
 		title := entry.GetAttributeValue("title")
 		dept := entry.GetAttributeValue("ou")
 		phone := entry.GetAttributeValue("telephoneNumber")
+		org = strings.Replace(org, "lamb", "wolf", -1)
 
 		iter := app.listStore.Append()
 		app.listStore.Set(iter,
-			[]int{0, 1, 2, 3},
-			[]interface{}{name, title, dept, phone},
+			[]int{1, 2, 3, 4, 5, 6},
+			[]interface{}{name, mail, phone, dept, title, org},
 		)
 	}
 	if len(result.Entries) == 0 {
@@ -683,19 +705,18 @@ func (app *App) createAppIndicator() {
 	app.indicator = indicator
 	app.indicator.SetStatus(appindicator.StatusActive)
 
-	/*
-		// Создаем отдельное окно для обработки событий
-		eventWindow, _ := gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
-		eventWindow.Connect("button-press-event", func(win *gtk.Window, event *gdk.Event) {
-			btnEvent := gdk.EventButtonNewFromEvent(event)
-			if btnEvent.Button() == 1 && btnEvent.Type() == gdk.EVENT_2BUTTON_PRESS {
-				if app.isInTray {
-					app.restoreFromTray()
-				} else {
-					app.minimizeToTray()
-				}
+	// Создаем отдельное окно для обработки событий
+	eventWindow, _ := gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
+	eventWindow.Connect("button-press-event", func(win *gtk.Window, event *gdk.Event) {
+		btnEvent := gdk.EventButtonNewFromEvent(event)
+		if btnEvent.Button() == 1 && btnEvent.Type() == gdk.EVENT_2BUTTON_PRESS {
+			if app.isInTray {
+				app.restoreFromTray()
+			} else {
+				app.minimizeToTray()
 			}
-		})*/
+		}
+	})
 
 	// Создаем контекстное меню
 	menu, _ := gtk.MenuNew()
