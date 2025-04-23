@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/dawidd6/go-appindicator"
@@ -36,6 +37,7 @@ var (
 	detailsBuffer *gtk.TextBuffer
 	socketPath    string
 	indicator     *appindicator.Indicator
+	isInTray      bool
 )
 
 func main() {
@@ -45,6 +47,7 @@ func main() {
 		activateExistingInstance()
 		os.Exit(0)
 	}
+	isInTray = false
 
 	// Загружаем конфигурацию
 	loadConfig()
@@ -87,10 +90,10 @@ func loadConfig() {
 	if err != nil {
 		// Создаем конфиг по умолчанию, если файл не существует
 		config = Config{
-			LDAPServer:   "ldap://localhost:389",
-			BindDN:       "cn=admin,dc=example,dc=com",
-			BindPassword: "password",
-			BaseDN:       "dc=example,dc=com",
+			LDAPServer:   "localhost:389",
+			BindDN:       "cn=admin,dc=mail,dc=local",
+			BindPassword: "123456",
+			BaseDN:       "dc=mail,dc=local",
 			SocketPath:   filepath.Join(os.TempDir(), "ldap-phonebook.sock"),
 		}
 
@@ -127,6 +130,11 @@ func createMainWindow() {
 	mainWindow.SetDefaultSize(1000, 600)
 	mainWindow.Connect("destroy", func() {
 		gtk.MainQuit()
+	})
+
+	mainWindow.Connect("delete-event", func() bool {
+		minimizeToTray()
+		return true
 	})
 
 	// Создаем основной контейнер с разделителем
@@ -351,7 +359,7 @@ func createMainWindow() {
 	detailsBox.PackStart(detailsScrolled, true, true, 0)
 
 	// Устанавливаем минимальный размер для нижней панели
-	detailsBox.SetSizeRequest(-1, 100)
+	detailsBox.SetSizeRequest(-1, 120)
 
 	// Добавляем части в вертикальный разделитель
 	centerPanel.Pack1(topCenterBox, true, false)
@@ -361,13 +369,39 @@ func createMainWindow() {
 	// Добавляем панели в горизонтальный разделитель
 	mainPaned.Pack1(leftPanel, false, false)
 	mainPaned.Pack2(centerPanel, true, false)
-	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.25))
+	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.5))
 
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
 
 	// Настройка обработчиков событий
 	setupEventHandlers()
+}
+
+func onWindowDelete() bool {
+	minimizeToTray()
+	return true
+}
+
+func minimizeToTray() {
+	mainWindow.Hide()
+	isInTray = true
+}
+
+func restoreFromTray() {
+	if mainWindow != nil {
+		mainWindow.Present()
+		mainWindow.Show()
+		mainWindow.Deiconify()
+		mainWindow.SetKeepAbove(true)
+
+		glib.TimeoutAdd(100, func() bool {
+			mainWindow.SetKeepAbove(false)
+			return false
+		})
+
+		isInTray = false
+	}
 }
 
 func createStatusIndicator() {
@@ -388,13 +422,7 @@ func createStatusIndicator() {
 		return
 	}
 
-	showItem.Connect("activate", func() {
-		if mainWindow.GetVisible() {
-			mainWindow.Hide()
-		} else {
-			mainWindow.Present()
-		}
-	})
+	showItem.Connect("activate", restoreFromTray)
 
 	menu.Append(showItem)
 
@@ -652,7 +680,7 @@ func searchPeople(filter string) {
 					entry.GetAttributeValue("mail"),
 					entry.GetAttributeValue("telephoneNumber"),
 					entry.GetAttributeValue("ou"),
-					entry.GetAttributeValue("o"),
+					strings.Replace(strings.Replace(entry.GetAttributeValue("o"), "&#039;", "'", -1), "&quot;", "\"", -1),
 				})
 		}
 	})
@@ -690,7 +718,7 @@ func onPersonSelected() {
 	detailsBuffer.SetText(details)
 
 	// Выделяем соответствующий отдел в дереве
-	selectDepartmentInTree(deptStr)
+	//selectDepartmentInTree(deptStr)
 }
 
 func selectDepartmentInTree(department string) {
