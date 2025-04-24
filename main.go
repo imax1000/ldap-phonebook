@@ -581,6 +581,11 @@ func setupEventHandlers() {
 		go onPersonSelected()
 	})
 
+	// Обработка выбора в результатах поиска
+	resultsView.Connect("cursor-changed", func() {
+		go onPersonSelected()
+	})
+
 	// Обработка нажатия Enter в поле поиска
 	searchEntry.Connect("activate", func() {
 		go performSearch()
