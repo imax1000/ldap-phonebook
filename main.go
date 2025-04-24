@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -12,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/dawidd6/go-appindicator"
-	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"gopkg.in/ldap.v2"
@@ -24,7 +24,6 @@ type Config struct {
 	BindDN       string `json:"bind_dn"`
 	BindPassword string `json:"bind_password"`
 	BaseDN       string `json:"base_dn"`
-	SocketPath   string `json:"socket_path"`
 }
 
 var (
@@ -35,22 +34,30 @@ var (
 	resultsView   *gtk.TreeView
 	detailsView   *gtk.TextView
 	detailsBuffer *gtk.TextBuffer
-	socketPath    string
 	indicator     *appindicator.Indicator
 	isInTray      bool
 )
 
+const (
+	appName     = "ldap-phonebook"
+	appVersion  = "0.0.4"
+	defaultIcon = "ldap-phonebook.ico"
+	configFile  = "ldap-phonebook.json"
+	socketFile  = "/tmp/ldap-phonebook.sock"
+)
+
 func main() {
+
 	// Проверяем, не запущен ли уже экземпляр программы
 	if isAlreadyRunning() {
 		fmt.Println("Программа уже запущена. Активируем существующий экземпляр...")
 		activateExistingInstance()
 		os.Exit(0)
 	}
-	isInTray = false
-
 	// Загружаем конфигурацию
 	loadConfig()
+
+	isInTray = false
 
 	// Инициализируем GTK
 	gtk.Init(nil)
@@ -94,7 +101,6 @@ func loadConfig() {
 			BindDN:       "cn=admin,dc=mail,dc=local",
 			BindPassword: "123456",
 			BaseDN:       "dc=mail,dc=local",
-			SocketPath:   filepath.Join(os.TempDir(), "ldap-phonebook.sock"),
 		}
 
 		// Создаем директорию, если ее нет
@@ -113,7 +119,6 @@ func loadConfig() {
 		os.Exit(1)
 	}
 
-	socketPath = config.SocketPath
 }
 
 func createMainWindow() {
@@ -126,11 +131,12 @@ func createMainWindow() {
 		os.Exit(1)
 	}
 
-	mainWindow.SetTitle("LDAP Телефонный справочник")
+	mainWindow.SetTitle("LDAP Телефонный справочник" + " v." + appVersion)
 	mainWindow.SetDefaultSize(1000, 600)
 	mainWindow.Connect("destroy", func() {
 		gtk.MainQuit()
 	})
+	setWindowIcon()
 
 	mainWindow.Connect("delete-event", func() bool {
 		minimizeToTray()
@@ -316,38 +322,38 @@ func createMainWindow() {
 		fmt.Printf("Ошибка получения буфера: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Контекстное меню для детальной информации
-	detailsView.Connect("button-press-event", func(v *gtk.TextView, ev *gdk.Event) {
-		event := gdk.EventButtonNewFromEvent(ev)
-		if event.Button() == 3 { // Правая кнопка мыши
-			menu, err := gtk.MenuNew()
-			if err != nil {
-				return
-			}
-
-			copyItem, err := gtk.MenuItemNewWithLabel("Копировать")
-			if err != nil {
-				return
-			}
-
-			copyItem.Connect("activate", func() {
-				start, end := detailsBuffer.GetBounds()
-				text, err := detailsBuffer.GetText(start, end, false)
-				if err == nil {
-					clipboard, err := gtk.ClipboardGet(gdk.SELECTION_CLIPBOARD)
-					if err == nil {
-						clipboard.SetText(text)
-					}
+	/*
+		// Контекстное меню для детальной информации
+		detailsView.Connect("button-press-event", func(v *gtk.TextView, ev *gdk.Event) {
+			event := gdk.EventButtonNewFromEvent(ev)
+			if event.Button() == 3 { // Правая кнопка мыши
+				menu, err := gtk.MenuNew()
+				if err != nil {
+					return
 				}
-			})
 
-			menu.Append(copyItem)
-			menu.ShowAll()
-			menu.PopupAtPointer(ev)
-		}
-	})
+				copyItem, err := gtk.MenuItemNewWithLabel("Копировать")
+				if err != nil {
+					return
+				}
 
+				copyItem.Connect("activate", func() {
+					start, end := detailsBuffer.GetBounds()
+					text, err := detailsBuffer.GetText(start, end, false)
+					if err == nil {
+						clipboard, err := gtk.ClipboardGet(gdk.SELECTION_CLIPBOARD)
+						if err == nil {
+							clipboard.SetText(text)
+						}
+					}
+				})
+
+				menu.Append(copyItem)
+				menu.ShowAll()
+				menu.PopupAtPointer(ev)
+			}
+		})
+	*/
 	// Прокручиваемая область для детальной информации
 	detailsScrolled, err := gtk.ScrolledWindowNew(nil, nil)
 	if err != nil {
@@ -369,7 +375,7 @@ func createMainWindow() {
 	// Добавляем панели в горизонтальный разделитель
 	mainPaned.Pack1(leftPanel, false, false)
 	mainPaned.Pack2(centerPanel, true, false)
-	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.5))
+	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 1.9))
 
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
@@ -405,8 +411,9 @@ func restoreFromTray() {
 }
 
 func createStatusIndicator() {
-	indicator = appindicator.New("ldap-phonebook", "system-users", appindicator.CategoryApplicationStatus)
+	indicator = appindicator.New(appName, defaultIcon, appindicator.CategoryApplicationStatus)
 	indicator.SetStatus(appindicator.StatusActive)
+	indicator.SetTitle(appName)
 
 	// Создаем меню
 	menu, err := gtk.MenuNew()
@@ -414,6 +421,15 @@ func createStatusIndicator() {
 		fmt.Printf("Ошибка создания меню: %v\n", err)
 		return
 	}
+
+	// Пункт "заголовок"
+	appItem, err := gtk.MenuItemNewWithLabel(appName + " v." + appVersion)
+	if err != nil {
+		fmt.Printf("Ошибка создания пункта меню: %v\n", err)
+		return
+	}
+	appItem.SetSensitive(false)
+	menu.Append(appItem)
 
 	// Пункт "Показать"
 	showItem, err := gtk.MenuItemNewWithLabel("Показать")
@@ -787,21 +803,21 @@ func showErrorDialog(message string) {
 
 func isAlreadyRunning() bool {
 	// Проверяем, существует ли сокет
-	if _, err := os.Stat(socketPath); err == nil {
+	if _, err := os.Stat(socketFile); err == nil {
 		// Пробуем подключиться к сокету
-		conn, err := net.Dial("unix", socketPath)
+		conn, err := net.Dial("unix", socketFile)
 		if err == nil {
 			conn.Close()
 			return true
 		}
 		// Если подключиться не удалось, удаляем старый сокет
-		os.Remove(socketPath)
+		os.Remove(socketFile)
 	}
 	return false
 }
 
 func activateExistingInstance() {
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := net.Dial("unix", socketFile)
 	if err != nil {
 		return
 	}
@@ -815,21 +831,21 @@ func activateExistingInstance() {
 
 func startUnixSocketServer() {
 	// Удаляем старый сокет, если он существует
-	os.Remove(socketPath)
+	os.Remove(socketFile)
 
 	// Создаем директорию для сокета, если ее нет
-	os.MkdirAll(filepath.Dir(socketPath), 0755)
+	os.MkdirAll(filepath.Dir(socketFile), 0755)
 
 	// Создаем Unix socket
-	l, err := net.Listen("unix", socketPath)
+	l, err := net.Listen("unix", socketFile)
 	if err != nil {
 		fmt.Printf("Ошибка создания Unix socket: %v\n", err)
 		return
 	}
-	defer l.Close()
+	//	defer l.Close()
 
 	// Устанавливаем права на сокет
-	os.Chmod(socketPath, 0600)
+	os.Chmod(socketFile, 0600)
 
 	for {
 		conn, err := l.Accept()
@@ -852,9 +868,7 @@ func handleConnection(conn net.Conn) {
 
 	cmd := string(buf[:n])
 	if cmd == "activate\n" {
-		glib.IdleAdd(func() {
-			mainWindow.Present()
-		})
+		restoreFromTray()
 	}
 }
 
@@ -868,4 +882,12 @@ func setupSignalHandler() {
 			gtk.MainQuit()
 		})
 	}()
+}
+func setWindowIcon() {
+	err := mainWindow.SetIconFromFile(defaultIcon)
+	if err != nil {
+		log.Printf("Ошибка загрузки данных иконки: %v\n", err)
+	} else {
+		mainWindow.SetIconName("system-users")
+	}
 }
