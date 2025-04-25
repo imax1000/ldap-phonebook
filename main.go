@@ -66,7 +66,7 @@ type OrgNode struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "0.0.4"
+	appVersion  = "0.1"
 	defaultIcon = "ldap-phonebook.ico"
 	configFile  = "ldap-phonebook.json"
 	socketFile  = "/tmp/ldap-phonebook.sock"
