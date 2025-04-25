@@ -66,7 +66,7 @@ type OrgNode struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "0.1"
+	appVersion  = "0.2"
 	defaultIcon = "ldap-phonebook.ico"
 	configFile  = "ldap-phonebook.json"
 	socketFile  = "/tmp/ldap-phonebook.sock"
@@ -387,7 +387,7 @@ func createMainWindow() {
 
 	// Настройка обработчиков событий
 	setupEventHandlers()
-	resultsScrolled.SetSizeRequest(-1, 300)
+	resultsScrolled.SetSizeRequest(-1, 370)
 }
 
 func onWindowDelete() bool {
@@ -617,6 +617,9 @@ func loadLDAPData() {
 		//	var root *OrgNode
 		//	root = buildOrgTree(sr.Entries)
 		// Populate tree store
+		sort.Slice(sr.Entries, func(i, j int) (less bool) {
+			return sr.Entries[i].DN < sr.Entries[j].DN
+		})
 		populateTreeStore(treeStore.(*gtk.TreeStore), nil, buildOrgTree(sr.Entries))
 
 		// Добавляем организации и отделы
@@ -627,7 +630,26 @@ func loadLDAPData() {
 			}
 
 		}
+		// Функция для раскрытия уровней
+		//		expandLevels := func() {
+		// Раскрытие первого уровня
+		iter, _ := treeStore.(*gtk.TreeStore).GetIterFirst()
+		path, _ := treeStore.(*gtk.TreeStore).GetPath(iter)
+		treeView.ExpandRow(path, false)
 
+		/*
+			// Раскрытие второго уровня
+			var childIter gtk.TreeIter
+			hasChild := treeStore.(*gtk.TreeStore).IterHasChild(iter)
+			treeStore.(*gtk.TreeStore).IterChildren(iter, &childIter)
+
+			for hasChild {
+				// Раскрытие второго уровня
+				childPath, _ := treeStore.(*gtk.TreeStore).GetPath(&childIter)
+				treeView.ExpandRow(childPath, false)
+				hasChild = treeStore.(*gtk.TreeStore).IterNext(&childIter)
+			}
+		*/
 	})
 }
 
@@ -654,6 +676,7 @@ func setupEventHandlers() {
 }
 
 func onDepartmentSelected() {
+
 	selection, err := treeView.GetSelection()
 	if err != nil {
 		return
@@ -872,9 +895,13 @@ func searchPeople(filter string) {
 				})
 		}
 	})
+	// Обновляем детальную информацию
+	detailsBuffer.SetText("")
+
 }
 
 func onPersonSelected() {
+
 	selection, err := resultsView.GetSelection()
 	if err != nil {
 		return
@@ -885,7 +912,14 @@ func onPersonSelected() {
 		return
 	}
 
-	//index , _ := model.(*gtk.TreeModel).
+	// Получаем путь к выбранному элементу
+	path, err := model.(*gtk.TreeModel).GetPath(iter)
+	if err != nil {
+		return
+	}
+
+	index := path.GetIndices()[0]
+	//	fmt.Printf("Выделенная строка имеет индекс: %d\n", rowIndex)
 
 	// Получаем данные о человеке
 	fullName, _ := model.(*gtk.TreeModel).GetValue(iter, 0)
@@ -893,26 +927,29 @@ func onPersonSelected() {
 	phone, _ := model.(*gtk.TreeModel).GetValue(iter, 2)
 	department, _ := model.(*gtk.TreeModel).GetValue(iter, 3)
 	organization, _ := model.(*gtk.TreeModel).GetValue(iter, 4)
-	location, _ := model.(*gtk.TreeModel).GetValue(iter, 5)
-	address, _ := model.(*gtk.TreeModel).GetValue(iter, 6)
 
 	fullNameStr, _ := fullName.GetString()
 	emailStr, _ := email.GetString()
 	phoneStr, _ := phone.GetString()
 	deptStr, _ := department.GetString()
 	orgStr, _ := organization.GetString()
-	lStr, _ := location.GetString()
-	addressStr, _ := address.GetString()
+
+	if fullNameStr != searchResult[index].CN {
+		fmt.Printf("Несоответсвие строки и индекса элемента : %d\n", index)
+		return
+	}
 
 	// Формируем детальную информацию
-	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s\nГородя: %s\nАдрес: %s",
-		fullNameStr, emailStr, phoneStr, deptStr, orgStr, lStr, addressStr)
+	//details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s",
+	//	fullNameStr, emailStr, phoneStr, deptStr, orgStr)
+	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s\nГород: %s\nАдрес: %s",
+		fullNameStr, emailStr, phoneStr, deptStr, orgStr, searchResult[index].L, searchResult[index].PostalAddress)
 
 	// Обновляем детальную информацию
 	detailsBuffer.SetText(details)
 
 	// Выделяем соответствующий отдел в дереве
-	//selectDepartmentInTree(deptStr)
+	//	selectDepartmentInTree(deptStr)
 }
 
 func selectDepartmentInTree(department string) {
