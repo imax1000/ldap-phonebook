@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -35,7 +36,9 @@ var (
 	detailsView   *gtk.TextView
 	detailsBuffer *gtk.TextBuffer
 	indicator     *appindicator.Indicator
-	isInTray      bool
+	searchResult  []LDIFEntry
+
+	isInTray bool
 )
 
 // LDIFEntry represents a single LDAP entry from the LDIF file
@@ -164,7 +167,7 @@ func createMainWindow() {
 	}
 
 	mainWindow.SetTitle("LDAP Телефонный справочник" + " v." + appVersion)
-	mainWindow.SetDefaultSize(1000, 600)
+	mainWindow.SetDefaultSize(1200, 600)
 	mainWindow.Connect("destroy", func() {
 		gtk.MainQuit()
 	})
@@ -226,6 +229,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания прокручиваемой области: %v\n", err)
 		os.Exit(1)
 	}
+	scrolledWindow.SetSizeRequest(330, -1)
 
 	scrolledWindow.Add(treeView)
 	leftPanel.PackStart(scrolledWindow, true, true, 0)
@@ -311,7 +315,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания прокручиваемой области результатов: %v\n", err)
 		os.Exit(1)
 	}
-
+	resultsScrolled.SetSizeRequest(-1, 500)
 	resultsScrolled.Add(resultsView)
 
 	// Контейнер для верхней и центральной части
@@ -354,38 +358,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка получения буфера: %v\n", err)
 		os.Exit(1)
 	}
-	/*
-		// Контекстное меню для детальной информации
-		detailsView.Connect("button-press-event", func(v *gtk.TextView, ev *gdk.Event) {
-			event := gdk.EventButtonNewFromEvent(ev)
-			if event.Button() == 3 { // Правая кнопка мыши
-				menu, err := gtk.MenuNew()
-				if err != nil {
-					return
-				}
 
-				copyItem, err := gtk.MenuItemNewWithLabel("Копировать")
-				if err != nil {
-					return
-				}
-
-				copyItem.Connect("activate", func() {
-					start, end := detailsBuffer.GetBounds()
-					text, err := detailsBuffer.GetText(start, end, false)
-					if err == nil {
-						clipboard, err := gtk.ClipboardGet(gdk.SELECTION_CLIPBOARD)
-						if err == nil {
-							clipboard.SetText(text)
-						}
-					}
-				})
-
-				menu.Append(copyItem)
-				menu.ShowAll()
-				menu.PopupAtPointer(ev)
-			}
-		})
-	*/
 	// Прокручиваемая область для детальной информации
 	detailsScrolled, err := gtk.ScrolledWindowNew(nil, nil)
 	if err != nil {
@@ -407,13 +380,14 @@ func createMainWindow() {
 	// Добавляем панели в горизонтальный разделитель
 	mainPaned.Pack1(leftPanel, false, false)
 	mainPaned.Pack2(centerPanel, true, false)
-	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 1.9))
+	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.5))
 
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
 
 	// Настройка обработчиков событий
 	setupEventHandlers()
+	resultsScrolled.SetSizeRequest(-1, 300)
 }
 
 func onWindowDelete() bool {
@@ -628,8 +602,6 @@ func loadLDAPData() {
 		})
 		return
 	}
-	//	var entries LDIFEntry
-	//	entries, err := parseLDIF(sr)
 
 	// Обновляем дерево в основном потоке GTK
 	glib.IdleAdd(func() {
@@ -642,10 +614,10 @@ func loadLDAPData() {
 		treeStore.(*gtk.TreeStore).Clear()
 		/////////////////////////////////////////////////////////////////////////////////////
 
-		var root *OrgNode
-		root = buildOrgTree(sr.Entries)
+		//	var root *OrgNode
+		//	root = buildOrgTree(sr.Entries)
 		// Populate tree store
-		populateTreeStore(treeStore.(*gtk.TreeStore), nil, root)
+		populateTreeStore(treeStore.(*gtk.TreeStore), nil, buildOrgTree(sr.Entries))
 
 		// Добавляем организации и отделы
 		for _, entry := range sr.Entries {
@@ -654,36 +626,6 @@ func loadLDAPData() {
 				continue
 			}
 
-			/*
-				// Добавляем организацию
-				orgIter := treeStore.(*gtk.TreeStore).Append(nil)
-				treeStore.(*gtk.TreeStore).SetValue(orgIter, 0, orgName)
-
-				// Ищем отделы в организации
-				deptSearchRequest := ldap.NewSearchRequest(
-					entry.DN,
-					ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
-					"(objectClass=organizationalUnit)",
-					[]string{"ou"},
-					nil,
-				)
-
-				deptSr, err := l.Search(deptSearchRequest)
-				if err != nil {
-					continue
-				}
-
-				// Добавляем отделы
-				for _, deptEntry := range deptSr.Entries {
-					deptName := deptEntry.GetAttributeValue("ou")
-					if deptName == "" {
-						continue
-					}
-
-					deptIter := treeStore.(*gtk.TreeStore).Append(orgIter)
-					treeStore.(*gtk.TreeStore).SetValue(deptIter, 0, deptName)
-				}
-			*/
 		}
 
 	})
@@ -730,20 +672,94 @@ func onDepartmentSelected() {
 
 	// Определяем уровень вложенности
 	depth := path.GetDepth()
-	if depth != 2 {
-		return // Выбрана не организация и не отдел
-	}
 
-	// Получаем название отдела
-	value, err := model.(*gtk.TreeModel).GetValue(iter, 0)
-	if err != nil {
+	if depth <= 2 {
 		return
 	}
 
-	deptName, _ := value.GetString()
+	// Получаем модель
+	model, err = treeView.GetModel()
+	if err != nil {
+		log.Println("Ошибка модели:", err)
+		return
+	}
 
-	// Ищем людей в отделе
-	searchPeople("(ou=" + deptName + ")")
+	// Приводим к TreeStore
+	treeStore, ok := model.(*gtk.TreeStore)
+	if !ok {
+		log.Println("Неверный тип модели")
+		return
+	}
+
+	// Получаем итератор текущего элемента
+	//iter, err = treeStore.GetIter(path)
+	//if err != nil {
+	//log.Println("Ошибка итератора:", err)
+	//return
+	//}
+
+	value, err := model.(*gtk.TreeStore).GetValue(iter, 0)
+	if err != nil {
+		return
+	}
+	itemName, _ := value.GetString()
+
+	var rootName, parentName string
+	// Проверяем родителя
+	var parentIter gtk.TreeIter
+	if treeStore.IterParent(&parentIter, iter) {
+		// Получаем значение из колонки 0 (текст)
+		value, err := treeStore.GetValue(&parentIter, 0)
+		if err != nil {
+			log.Println("Ошибка значения:", err)
+			return
+		}
+
+		// Извлекаем строку
+		parentName, err = value.GetString()
+		if err != nil {
+			log.Println("Ошибка преобразования:", err)
+			return
+		}
+		//		fmt.Printf("Текст родителя: %s\n", parentName)
+	}
+	// Проверяем корень
+	var rootIter gtk.TreeIter
+	if treeStore.IterParent(&rootIter, &parentIter) {
+		// Получаем значение из колонки 0 (текст)
+		value, err := treeStore.GetValue(&rootIter, 0)
+		if err != nil {
+			log.Println("Ошибка значения:", err)
+			return
+		}
+
+		// Извлекаем строку
+		rootName, err = value.GetString()
+		if err != nil {
+			log.Println("Ошибка преобразования:", err)
+			return
+		}
+		//		fmt.Printf("Текст родителя: %s\n", parentName)
+	}
+	//	log.Printf("Путь элемента: %s->%s->%s\n", rootName, parentName, itemName)
+
+	hasChildren := treeStore.IterHasChild(iter)
+	//	log.Printf("Элемент имеет дочерние элементы: %v\n", hasChildren)
+
+	//treeStore.IterParent(&parentIter, iter)
+	//	log.Printf("Элемент является дочерним: %v\n", hasParent)
+
+	if depth == 4 {
+		// Ищем людей в отделе
+		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
+	} else if depth == 3 && !hasChildren {
+		// Ищем людей в отделе
+		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
+	} else if depth == 3 && hasChildren {
+		// Ищем людей в отделе
+		searchPeople("(o=" + parentName + ", " + itemName + ")")
+	}
+
 }
 
 func performSearch() {
@@ -788,7 +804,7 @@ func searchPeople(filter string) {
 		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		"(&(objectClass=inetOrgPerson)"+filter+")",
-		[]string{"cn", "mail", "telephoneNumber", "ou", "o", "title"},
+		[]string{"cn", "mail", "telephoneNumber", "ou", "o", "title", "l", "postalAddress"},
 		nil,
 	)
 
@@ -810,17 +826,49 @@ func searchPeople(filter string) {
 		// Очищаем список
 		listStore.(*gtk.ListStore).Clear()
 
+		searchResult = nil
+
 		// Добавляем результаты
 		for _, entry := range sr.Entries {
+
+			/*		iter := listStore.(*gtk.ListStore).Append()
+					listStore.(*gtk.ListStore).Set(iter,
+						[]int{0, 1, 2, 3, 4},
+						[]interface{}{
+							entry.GetAttributeValue("cn"),
+							entry.GetAttributeValue("mail"),
+							entry.GetAttributeValue("telephoneNumber"),
+							entry.GetAttributeValue("ou"),
+							strings.Replace(strings.Replace(entry.GetAttributeValue("o"), "&#039;", "'", -1), "&quot;", "\"", -1),
+						})
+			*/
+			var item LDIFEntry
+			item.CN = entry.GetAttributeValue("cn")
+			item.Mail = entry.GetAttributeValue("mail")
+			item.OU = entry.GetAttributeValue("ou")
+			item.L = entry.GetAttributeValue("l")
+			item.Title = entry.GetAttributeValue("title")
+			item.O = entry.GetAttributeValue("o")
+			item.TelephoneNumber = entry.GetAttributeValue("telephoneNumber")
+			item.PostalAddress = entry.GetAttributeValue("postalAddress")
+
+			searchResult = append(searchResult, item)
+		}
+
+		sort.Slice(searchResult, func(i, j int) (less bool) {
+			return searchResult[i].CN < searchResult[j].CN
+		})
+
+		for _, entry := range searchResult {
 			iter := listStore.(*gtk.ListStore).Append()
 			listStore.(*gtk.ListStore).Set(iter,
 				[]int{0, 1, 2, 3, 4},
 				[]interface{}{
-					entry.GetAttributeValue("cn"),
-					entry.GetAttributeValue("mail"),
-					entry.GetAttributeValue("telephoneNumber"),
-					entry.GetAttributeValue("ou"),
-					strings.Replace(strings.Replace(entry.GetAttributeValue("o"), "&#039;", "'", -1), "&quot;", "\"", -1),
+					entry.CN,
+					entry.Mail,
+					entry.TelephoneNumber,
+					entry.OU,
+					strings.Replace(strings.Replace(entry.O, "&#039;", "'", -1), "&quot;", "\"", -1),
 				})
 		}
 	})
@@ -837,22 +885,28 @@ func onPersonSelected() {
 		return
 	}
 
+	//index , _ := model.(*gtk.TreeModel).
+
 	// Получаем данные о человеке
 	fullName, _ := model.(*gtk.TreeModel).GetValue(iter, 0)
 	email, _ := model.(*gtk.TreeModel).GetValue(iter, 1)
 	phone, _ := model.(*gtk.TreeModel).GetValue(iter, 2)
 	department, _ := model.(*gtk.TreeModel).GetValue(iter, 3)
 	organization, _ := model.(*gtk.TreeModel).GetValue(iter, 4)
+	location, _ := model.(*gtk.TreeModel).GetValue(iter, 5)
+	address, _ := model.(*gtk.TreeModel).GetValue(iter, 6)
 
 	fullNameStr, _ := fullName.GetString()
 	emailStr, _ := email.GetString()
 	phoneStr, _ := phone.GetString()
 	deptStr, _ := department.GetString()
 	orgStr, _ := organization.GetString()
+	lStr, _ := location.GetString()
+	addressStr, _ := address.GetString()
 
 	// Формируем детальную информацию
-	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s",
-		fullNameStr, emailStr, phoneStr, deptStr, orgStr)
+	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s\nГородя: %s\nАдрес: %s",
+		fullNameStr, emailStr, phoneStr, deptStr, orgStr, lStr, addressStr)
 
 	// Обновляем детальную информацию
 	detailsBuffer.SetText(details)
