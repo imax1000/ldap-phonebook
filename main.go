@@ -38,6 +38,29 @@ var (
 	isInTray      bool
 )
 
+// LDIFEntry represents a single LDAP entry from the LDIF file
+type LDIFEntry struct {
+	DN              string
+	ObjectClass     string
+	SN              string
+	CN              string
+	OU              string
+	Title           string
+	Mail            string
+	GivenName       string
+	Initials        string
+	TelephoneNumber string
+	L               string
+	PostalAddress   string
+	O               string
+}
+
+// OrgNode represents a node in the organizational tree
+type OrgNode struct {
+	Name     string
+	Children map[string]*OrgNode
+}
+
 const (
 	appName     = "ldap-phonebook"
 	appVersion  = "0.0.4"
@@ -54,6 +77,15 @@ func main() {
 		activateExistingInstance()
 		os.Exit(0)
 	}
+
+	// Создаем конфиг по умолчанию, если файл не существует
+	config = Config{
+		LDAPServer:   "localhost:389",
+		BindDN:       "dc=mail,dc=local",
+		BindPassword: "",
+		BaseDN:       "dc=mail,dc=local",
+	}
+
 	// Загружаем конфигурацию
 	loadConfig()
 
@@ -96,12 +128,12 @@ func loadConfig() {
 	data, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		// Создаем конфиг по умолчанию, если файл не существует
-		config = Config{
-			LDAPServer:   "localhost:389",
-			BindDN:       "cn=admin,dc=mail,dc=local",
-			BindPassword: "123456",
-			BaseDN:       "dc=mail,dc=local",
-		}
+		//		config = Config{
+		//			LDAPServer:   "localhost:389",
+		//			BindDN:       "dc=mail,dc=local",
+		//			BindPassword: "123456",
+		//			BaseDN:       "dc=mail,dc=local",
+		//		}
 
 		// Создаем директорию, если ее нет
 		os.MkdirAll(filepath.Dir(configPath), 0755)
@@ -484,6 +516,82 @@ func addColumn(treeView *gtk.TreeView, title string, id int) {
 	treeView.AppendColumn(column)
 }
 
+func buildOrgTree(entries []*ldap.Entry) *OrgNode {
+	root := &OrgNode{
+		Name:     "Организации и отделы",
+		Children: make(map[string]*OrgNode),
+	}
+
+	for _, entry := range entries {
+		str := entry.GetAttributeValue("o")
+		if str == "filial" || len(str) == 0 {
+			continue
+		}
+
+		orgParts := strings.SplitN(entry.GetAttributeValue("o"), ",", 2)
+		orgName := strings.TrimSpace(orgParts[0])
+		var deptName string
+		if len(orgParts) > 1 {
+			deptName = strings.TrimSpace(orgParts[1])
+		}
+
+		// Find or create organization node
+		orgNode, exists := root.Children[orgName]
+		if !exists {
+			orgNode = &OrgNode{
+				Name:     orgName,
+				Children: make(map[string]*OrgNode),
+			}
+			root.Children[orgName] = orgNode
+		}
+
+		// Handle department and OU
+		if deptName != "" {
+			// Organization has departments
+			deptNode, exists := orgNode.Children[deptName]
+			if !exists {
+				deptNode = &OrgNode{
+					Name:     deptName,
+					Children: make(map[string]*OrgNode),
+				}
+				orgNode.Children[deptName] = deptNode
+			}
+
+			// Add OU under department
+			if entry.GetAttributeValue("ou") != "" {
+				if _, exists := deptNode.Children[entry.GetAttributeValue("ou")]; !exists {
+					deptNode.Children[entry.GetAttributeValue("ou")] = &OrgNode{
+						Name:     entry.GetAttributeValue("ou"),
+						Children: make(map[string]*OrgNode),
+					}
+				}
+			}
+		} else {
+			// Organization has no departments, add OU directly under org
+			if entry.GetAttributeValue("ou") != "" {
+				if _, exists := orgNode.Children[entry.GetAttributeValue("ou")]; !exists {
+					orgNode.Children[entry.GetAttributeValue("ou")] = &OrgNode{
+						Name:     entry.GetAttributeValue("ou"),
+						Children: make(map[string]*OrgNode),
+					}
+				}
+			}
+		}
+	}
+
+	return root
+}
+
+// Helper function to populate tree store
+func populateTreeStore(store *gtk.TreeStore, parent *gtk.TreeIter, node *OrgNode) {
+	iter := store.Append(parent)
+	store.SetValue(iter, 0, node.Name)
+
+	for _, child := range node.Children {
+		populateTreeStore(store, iter, child)
+	}
+}
+
 func loadLDAPData() {
 	// Подключаемся к LDAP серверу
 	l, err := ldap.Dial("tcp", config.LDAPServer)
@@ -508,8 +616,8 @@ func loadLDAPData() {
 	searchRequest := ldap.NewSearchRequest(
 		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		"(objectClass=organization)",
-		[]string{"o"},
+		"(objectClass=inetOrgPerson)",
+		[]string{"o", "ou"},
 		nil,
 	)
 
@@ -520,6 +628,8 @@ func loadLDAPData() {
 		})
 		return
 	}
+	//	var entries LDIFEntry
+	//	entries, err := parseLDIF(sr)
 
 	// Обновляем дерево в основном потоке GTK
 	glib.IdleAdd(func() {
@@ -530,6 +640,12 @@ func loadLDAPData() {
 
 		// Очищаем дерево
 		treeStore.(*gtk.TreeStore).Clear()
+		/////////////////////////////////////////////////////////////////////////////////////
+
+		var root *OrgNode
+		root = buildOrgTree(sr.Entries)
+		// Populate tree store
+		populateTreeStore(treeStore.(*gtk.TreeStore), nil, root)
 
 		// Добавляем организации и отделы
 		for _, entry := range sr.Entries {
@@ -538,35 +654,38 @@ func loadLDAPData() {
 				continue
 			}
 
-			// Добавляем организацию
-			orgIter := treeStore.(*gtk.TreeStore).Append(nil)
-			treeStore.(*gtk.TreeStore).SetValue(orgIter, 0, orgName)
+			/*
+				// Добавляем организацию
+				orgIter := treeStore.(*gtk.TreeStore).Append(nil)
+				treeStore.(*gtk.TreeStore).SetValue(orgIter, 0, orgName)
 
-			// Ищем отделы в организации
-			deptSearchRequest := ldap.NewSearchRequest(
-				entry.DN,
-				ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
-				"(objectClass=organizationalUnit)",
-				[]string{"ou"},
-				nil,
-			)
+				// Ищем отделы в организации
+				deptSearchRequest := ldap.NewSearchRequest(
+					entry.DN,
+					ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
+					"(objectClass=organizationalUnit)",
+					[]string{"ou"},
+					nil,
+				)
 
-			deptSr, err := l.Search(deptSearchRequest)
-			if err != nil {
-				continue
-			}
-
-			// Добавляем отделы
-			for _, deptEntry := range deptSr.Entries {
-				deptName := deptEntry.GetAttributeValue("ou")
-				if deptName == "" {
+				deptSr, err := l.Search(deptSearchRequest)
+				if err != nil {
 					continue
 				}
 
-				deptIter := treeStore.(*gtk.TreeStore).Append(orgIter)
-				treeStore.(*gtk.TreeStore).SetValue(deptIter, 0, deptName)
-			}
+				// Добавляем отделы
+				for _, deptEntry := range deptSr.Entries {
+					deptName := deptEntry.GetAttributeValue("ou")
+					if deptName == "" {
+						continue
+					}
+
+					deptIter := treeStore.(*gtk.TreeStore).Append(orgIter)
+					treeStore.(*gtk.TreeStore).SetValue(deptIter, 0, deptName)
+				}
+			*/
 		}
+
 	})
 }
 
@@ -668,7 +787,7 @@ func searchPeople(filter string) {
 	searchRequest := ldap.NewSearchRequest(
 		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		"(&(objectClass=person)"+filter+")",
+		"(&(objectClass=inetOrgPerson)"+filter+")",
 		[]string{"cn", "mail", "telephoneNumber", "ou", "o", "title"},
 		nil,
 	)
