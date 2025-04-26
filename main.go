@@ -630,26 +630,12 @@ func loadLDAPData() {
 			}
 
 		}
-		// Функция для раскрытия уровней
-		//		expandLevels := func() {
+
 		// Раскрытие первого уровня
 		iter, _ := treeStore.(*gtk.TreeStore).GetIterFirst()
 		path, _ := treeStore.(*gtk.TreeStore).GetPath(iter)
 		treeView.ExpandRow(path, false)
 
-		/*
-			// Раскрытие второго уровня
-			var childIter gtk.TreeIter
-			hasChild := treeStore.(*gtk.TreeStore).IterHasChild(iter)
-			treeStore.(*gtk.TreeStore).IterChildren(iter, &childIter)
-
-			for hasChild {
-				// Раскрытие второго уровня
-				childPath, _ := treeStore.(*gtk.TreeStore).GetPath(&childIter)
-				treeView.ExpandRow(childPath, false)
-				hasChild = treeStore.(*gtk.TreeStore).IterNext(&childIter)
-			}
-		*/
 	})
 }
 
@@ -666,7 +652,9 @@ func setupEventHandlers() {
 
 	// Обработка выбора в результатах поиска
 	resultsView.Connect("cursor-changed", func() {
-		go onPersonSelected()
+		if resultsView.IsFocus() {
+			go onPersonSelected()
+		}
 	})
 
 	// Обработка нажатия Enter в поле поиска
@@ -914,7 +902,7 @@ func onPersonSelected() {
 
 	// Получаем путь к выбранному элементу
 	path, err := model.(*gtk.TreeModel).GetPath(iter)
-	if err != nil {
+	if err != nil || path == nil {
 		return
 	}
 
@@ -942,8 +930,8 @@ func onPersonSelected() {
 	// Формируем детальную информацию
 	//details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s",
 	//	fullNameStr, emailStr, phoneStr, deptStr, orgStr)
-	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nОтдел: %s\nОрганизация: %s\nГород: %s\nАдрес: %s",
-		fullNameStr, emailStr, phoneStr, deptStr, orgStr, searchResult[index].L, searchResult[index].PostalAddress)
+	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nДолжность: %s\nОтдел: %s\nОрганизация: %s\nГород: %s\nАдрес: %s",
+		fullNameStr, emailStr, phoneStr, searchResult[index].Title, deptStr, orgStr, searchResult[index].L, searchResult[index].PostalAddress)
 
 	// Обновляем детальную информацию
 	detailsBuffer.SetText(details)
@@ -960,58 +948,6 @@ func onPersonSelected() {
 	// Выделяем соответствующий отдел в дереве
 	selectByPath(pathTree)
 
-}
-
-func selectDepartmentInTree(department string) {
-	treeStore, err := treeView.GetModel()
-	if err != nil {
-		return
-	}
-
-	// Ищем отдел в дереве
-	iter, ok := findDepartmentIter(treeStore.(*gtk.TreeModel), department)
-	if !ok {
-		return
-	}
-
-	// Выделяем отдел
-	selection, err := treeView.GetSelection()
-	if err != nil {
-		return
-	}
-
-	selection.SelectIter(iter)
-}
-
-func findDepartmentIter(model *gtk.TreeModel, department string) (*gtk.TreeIter, bool) {
-	var iter gtk.TreeIter
-	var ok bool
-
-	// Ищем в корневых элементах (организациях)
-	for _, ok = model.GetIterFirst(); ok; ok = model.IterNext(&iter) {
-		// Проверяем дочерние элементы (отделы)
-		var childIter gtk.TreeIter
-		if model.IterChildren(&childIter, &iter) {
-			for {
-				value, err := model.GetValue(&childIter, 0)
-				if err != nil {
-					break
-				}
-
-				deptName, _ := value.GetString()
-
-				if deptName == department {
-					return &childIter, true
-				}
-
-				if !model.IterNext(&childIter) {
-					break
-				}
-			}
-		}
-	}
-
-	return nil, false
 }
 
 func showErrorDialog(message string) {
