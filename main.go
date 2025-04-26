@@ -948,8 +948,18 @@ func onPersonSelected() {
 	// Обновляем детальную информацию
 	detailsBuffer.SetText(details)
 
+	pathTree := ""
+	strs := strings.Split(searchResult[index].O, ",")
+	pathTree = strs[0]
+	if len(strs) == 2 {
+		pathTree = pathTree + ":" + strs[1]
+	}
+
+	pathTree = pathTree + ":" + deptStr
+
 	// Выделяем соответствующий отдел в дереве
-	//	selectDepartmentInTree(deptStr)
+	selectByPath(pathTree)
+
 }
 
 func selectDepartmentInTree(department string) {
@@ -1105,4 +1115,79 @@ func setWindowIcon() {
 	} else {
 		mainWindow.SetIconName("system-users")
 	}
+}
+
+func selectByPath(pathStr string) {
+	parts := strings.Split(pathStr, ":")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] == "" {
+			log.Println("Некорректный путь")
+			return
+		}
+	}
+	model, err := treeView.GetModel()
+	var store *gtk.TreeStore
+
+	store, ok := model.(*gtk.TreeStore)
+	if !ok {
+		fmt.Errorf("модель не является TreeStore")
+		return
+	}
+
+	currentPath := "0"
+	s := "0"
+	// Перебираем каждую часть пути
+	for _, part := range parts {
+		// Формируем путь для текущего уровня
+		currentPath = s + ":0"
+
+		n, ok := findStrOnLevel(store, part, currentPath)
+		if ok {
+			s += ":" + fmt.Sprintf("%d", n)
+
+		}
+
+	}
+	//	fmt.Println(s)
+	//строим путь
+	path, err := gtk.TreePathNewFromString(s)
+	if err != nil {
+		return
+	}
+	//разворачиваем до элемент
+	treeView.ExpandToPath(path)
+	//выделяем элемент
+	selected, _ := treeView.GetSelection()
+	selected.SelectPath(path)
+
+	//прокручиваем до элемента
+	treeView.ScrollToCell(path, nil, true, 0.5, 0.5)
+
+	return
+}
+func getTextIter(store *gtk.TreeStore, iter *gtk.TreeIter) (string, error) {
+	val, err := store.GetValue(iter, 0)
+	if err != nil {
+		return "", err
+	}
+	str, err := val.GetString()
+	return str, err
+}
+
+func findStrOnLevel(store *gtk.TreeStore, str string, path string) (int, bool) {
+	iter, err := store.GetIterFromString(path)
+	if err != nil {
+		return -1, false
+	}
+	ok := true
+	for index := 0; ok; index++ {
+		s, _ := getTextIter(store, iter)
+		//		fmt.Printf(s)
+		if s == str {
+			return index, true
+		}
+		ok = store.IterNext(iter)
+	}
+	return -1, false
 }
