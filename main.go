@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/dawidd6/go-appindicator"
+	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"gopkg.in/ldap.v2"
@@ -222,6 +223,41 @@ func createMainWindow() {
 	}
 
 	treeView.AppendColumn(column)
+	treeView.SetEnableSearch(false)
+
+	// Контекстное меню для дерева
+	treeView.Connect("button-press-event", func(v *gtk.TreeView, ev *gdk.Event) {
+		event := gdk.EventButtonNewFromEvent(ev)
+		if event.Button() == 3 { // Правая кнопка мыши
+			menu, err := gtk.MenuNew()
+			if err != nil {
+				return
+			}
+
+			expandItem, err := gtk.MenuItemNewWithLabel("Развернуть все")
+			if err != nil {
+				return
+			}
+
+			collapseItem, err := gtk.MenuItemNewWithLabel("Свернуть все")
+			if err != nil {
+				return
+			}
+
+			expandItem.Connect("activate", func() {
+				treeView.ExpandAll()
+			})
+
+			collapseItem.Connect("activate", func() {
+				treeView.CollapseAll()
+			})
+
+			menu.Append(expandItem)
+			menu.Append(collapseItem)
+			menu.ShowAll()
+			menu.PopupAtPointer(ev)
+		}
+	})
 
 	// Добавляем дерево в прокручиваемую область
 	scrolledWindow, err := gtk.ScrolledWindowNew(nil, nil)
@@ -241,7 +277,23 @@ func createMainWindow() {
 		os.Exit(1)
 	}
 
-	// Верхняя часть центральной панели - поиск
+	// Панель поиска
+	searchPanel, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 5)
+	if err != nil {
+		fmt.Printf("Ошибка создания панели поиска: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Статический текст над строкой поиска
+	searchLabel, err := gtk.LabelNew("Панель поиска")
+	if err != nil {
+		fmt.Printf("Ошибка создания метки: %v\n", err)
+		os.Exit(1)
+	}
+	searchLabel.SetHAlign(gtk.ALIGN_START)
+	searchPanel.PackStart(searchLabel, false, false, 0)
+
+	// Горизонтальная панель с элементами поиска
 	searchBox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 5)
 	if err != nil {
 		fmt.Printf("Ошибка создания панели поиска: %v\n", err)
@@ -253,6 +305,8 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания поля поиска: %v\n", err)
 		os.Exit(1)
 	}
+	searchEntry.SetProperty("can-focus", true)
+	searchEntry.SetProperty("focus-on-click", true)
 
 	searchEntry.SetPlaceholderText("Поиск по ФИО, email, телефону...")
 
@@ -263,6 +317,10 @@ func createMainWindow() {
 	}
 
 	searchButton.Connect("clicked", func() {
+		go performSearch()
+	})
+	// Обработка нажатия Enter в поле поиска
+	searchEntry.Connect("activate", func() {
 		go performSearch()
 	})
 
@@ -276,6 +334,26 @@ func createMainWindow() {
 		gtk.MainQuit()
 	})
 
+	helpButton, err := gtk.ButtonNewWithLabel("?")
+	if err != nil {
+		fmt.Printf("Ошибка создания кнопки помощи: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Настройка порядка табуляции
+	searchEntry.SetProperty("can-focus", true)
+	searchButton.SetProperty("can-focus", true)
+	exitButton.SetProperty("can-focus", true)
+	helpButton.SetProperty("can-focus", true)
+
+	searchBox.PackStart(searchEntry, true, true, 0)
+	searchBox.PackStart(searchButton, false, false, 0)
+	searchBox.PackStart(exitButton, false, false, 0)
+	searchBox.PackStart(helpButton, false, false, 0)
+
+	searchPanel.PackStart(searchBox, false, false, 0)
+	//topCenterBox.PackStart(searchPanel, false, false, 0)
+
 	searchBox.PackStart(searchEntry, true, true, 0)
 	searchBox.PackStart(searchButton, false, false, 0)
 	searchBox.PackStart(exitButton, false, false, 0)
@@ -286,6 +364,10 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания таблицы результатов: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Включаем возможность изменения ширины колонок
+	resultsView.SetProperty("headers-clickable", true)
+	resultsView.SetProperty("reorderable", true)
 
 	// Настройка модели результатов
 	listStore, err := gtk.ListStoreNew(
@@ -302,12 +384,20 @@ func createMainWindow() {
 
 	resultsView.SetModel(listStore)
 
+	resultsView.SetEnableSearch(false)
 	// Добавляем колонки
-	addColumn(resultsView, "ФИО", 0)
-	addColumn(resultsView, "Email", 1)
-	addColumn(resultsView, "Телефон", 2)
-	addColumn(resultsView, "Отдел", 3)
-	addColumn(resultsView, "Организация", 4)
+	//	addColumn(resultsView, "ФИО", 0)
+	//	addColumn(resultsView, "Email", 1)
+	//	addColumn(resultsView, "Телефон", 2)
+	//	addColumn(resultsView, "Отдел", 3)
+	// addColumn(resultsView, "Организация", 4)
+
+	// Добавляем колонки с возможностью изменения ширины
+	addResizableColumn(resultsView, "ФИО", 0)
+	addResizableColumn(resultsView, "Email", 1)
+	addResizableColumn(resultsView, "Телефон", 2)
+	addResizableColumn(resultsView, "Отдел", 3)
+	addResizableColumn(resultsView, "Организация", 4)
 
 	// Прокручиваемая область для результатов
 	resultsScrolled, err := gtk.ScrolledWindowNew(nil, nil)
@@ -315,8 +405,9 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания прокручиваемой области результатов: %v\n", err)
 		os.Exit(1)
 	}
-	resultsScrolled.SetSizeRequest(-1, 500)
+	//	resultsScrolled.SetSizeRequest(-1, 500)
 	resultsScrolled.Add(resultsView)
+	resultsScrolled.SetSizeRequest(-1, 370)
 
 	// Контейнер для верхней и центральной части
 	topCenterBox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 5)
@@ -325,6 +416,7 @@ func createMainWindow() {
 		os.Exit(1)
 	}
 
+	topCenterBox.PackStart(searchPanel, false, false, 0)
 	topCenterBox.PackStart(searchBox, false, false, 0)
 	topCenterBox.PackStart(resultsScrolled, true, true, 0)
 
@@ -382,12 +474,42 @@ func createMainWindow() {
 	mainPaned.Pack2(centerPanel, true, false)
 	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.5))
 
+	// Настройка обработчиков событий
+	setupEventHandlers()
+	helpButton.Connect("clicked", showAboutDialog)
+
+	searchEntry.GrabFocus()
+
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
 
-	// Настройка обработчиков событий
-	setupEventHandlers()
-	resultsScrolled.SetSizeRequest(-1, 370)
+}
+
+func showAboutDialog() {
+	dialog, err := gtk.AboutDialogNew()
+	if err != nil {
+		fmt.Printf("Ошибка создания диалога: %v\n", err)
+		return
+	}
+	dialog.SetTitle("О программе")
+
+	dialog.SetProgramName(appName)
+	dialog.SetVersion(appVersion)
+	dialog.SetCopyright("© 2025 Maxim Izvekov")
+	dialog.SetComments("Программа для поиска контактных данных в LDAP")
+	//	dialog.SetLicense("Лицензия: MIT")
+	dialog.SetLicenseType(gtk.LICENSE_MIT_X11)
+	dialog.SetWebsite("https://github.com/imax1000/ldap-phonebook")
+	dialog.SetWebsiteLabel("Официальный сайт")
+
+	// Загрузка иконки
+	pixbuf, err := gdk.PixbufNewFromFile("ldap-phonebook.ico")
+	if err == nil {
+		dialog.SetLogo(pixbuf)
+	}
+
+	dialog.Run()
+	dialog.Destroy()
 }
 
 func onWindowDelete() bool {
@@ -474,7 +596,8 @@ func createStatusIndicator() {
 	})
 }
 
-func addColumn(treeView *gtk.TreeView, title string, id int) {
+// Добавляем колонку с возможностью изменения ширины
+func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 	renderer, err := gtk.CellRendererTextNew()
 	if err != nil {
 		fmt.Printf("Ошибка создания рендерера для колонки: %v\n", err)
@@ -487,9 +610,31 @@ func addColumn(treeView *gtk.TreeView, title string, id int) {
 		return
 	}
 
+	// Включаем возможность изменения размера колонки
+	column.SetResizable(true)
+	column.SetReorderable(true)
+	column.SetClickable(true)
+
 	treeView.AppendColumn(column)
 }
 
+/*
+	func addColumn(treeView *gtk.TreeView, title string, id int) {
+		renderer, err := gtk.CellRendererTextNew()
+		if err != nil {
+			fmt.Printf("Ошибка создания рендерера для колонки: %v\n", err)
+			return
+		}
+
+		column, err := gtk.TreeViewColumnNewWithAttribute(title, renderer, "text", id)
+		if err != nil {
+			fmt.Printf("Ошибка создания колонки %s: %v\n", title, err)
+			return
+		}
+
+		treeView.AppendColumn(column)
+	}
+*/
 func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	root := &OrgNode{
 		Name:     "Организации и отделы",
