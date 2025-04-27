@@ -67,7 +67,7 @@ type OrgNode struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "0.2"
+	appVersion  = "0.4"
 	defaultIcon = "ldap-phonebook.ico"
 	configFile  = "ldap-phonebook.json"
 	socketFile  = "/tmp/ldap-phonebook.sock"
@@ -501,7 +501,10 @@ func showAboutDialog() {
 	dialog.SetLicenseType(gtk.LICENSE_MIT_X11)
 	dialog.SetWebsite("https://github.com/imax1000/ldap-phonebook")
 	dialog.SetWebsiteLabel("Официальный сайт")
-
+	err = dialog.SetIconFromFile(defaultIcon)
+	if err != nil {
+		log.Printf("Ошибка загрузки данных иконки: %v\n", err)
+	}
 	// Загрузка иконки
 	pixbuf, err := gdk.PixbufNewFromFile("ldap-phonebook.ico")
 	if err == nil {
@@ -1208,8 +1211,6 @@ func setWindowIcon() {
 	err := mainWindow.SetIconFromFile(defaultIcon)
 	if err != nil {
 		log.Printf("Ошибка загрузки данных иконки: %v\n", err)
-	} else {
-		mainWindow.SetIconName("system-users")
 	}
 }
 
