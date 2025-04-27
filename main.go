@@ -131,13 +131,6 @@ func loadConfig() {
 	// Читаем конфигурационный файл
 	data, err := ioutil.ReadFile(configPath)
 	if err != nil {
-		// Создаем конфиг по умолчанию, если файл не существует
-		//		config = Config{
-		//			LDAPServer:   "localhost:389",
-		//			BindDN:       "dc=mail,dc=local",
-		//			BindPassword: "123456",
-		//			BaseDN:       "dc=mail,dc=local",
-		//		}
 
 		// Создаем директорию, если ее нет
 		os.MkdirAll(filepath.Dir(configPath), 0755)
@@ -175,7 +168,7 @@ func createMainWindow() {
 	setWindowIcon()
 
 	mainWindow.Connect("delete-event", func() bool {
-		minimizeToTray()
+		onWindowDelete()
 		return true
 	})
 
@@ -405,7 +398,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания прокручиваемой области результатов: %v\n", err)
 		os.Exit(1)
 	}
-	//	resultsScrolled.SetSizeRequest(-1, 500)
+	resultsScrolled.SetSizeRequest(-1, 500)
 	resultsScrolled.Add(resultsView)
 	resultsScrolled.SetSizeRequest(-1, 370)
 
@@ -462,7 +455,7 @@ func createMainWindow() {
 	detailsBox.PackStart(detailsScrolled, true, true, 0)
 
 	// Устанавливаем минимальный размер для нижней панели
-	detailsBox.SetSizeRequest(-1, 120)
+	detailsBox.SetSizeRequest(-1, 150)
 
 	// Добавляем части в вертикальный разделитель
 	centerPanel.Pack1(topCenterBox, true, false)
@@ -479,7 +472,7 @@ func createMainWindow() {
 	helpButton.Connect("clicked", showAboutDialog)
 
 	searchEntry.GrabFocus()
-
+	resultsScrolled.SetSizeRequest(-1, 350)
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
 
