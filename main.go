@@ -883,8 +883,14 @@ func searchPeople(filter string) {
 				})
 		}
 	})
-	// Обновляем детальную информацию
-	detailsBuffer.SetText("")
+	// Безопасное обновление текста
+	glib.IdleAdd(func() {
+		// Получаем границы текста
+		start, end := detailsBuffer.GetBounds()
+
+		// Удаляем старый текст
+		detailsBuffer.Delete(start, end)
+	})
 
 }
 
@@ -933,8 +939,17 @@ func onPersonSelected() {
 	details := fmt.Sprintf("ФИО: %s\nEmail: %s\nТелефон: %s\nДолжность: %s\nОтдел: %s\nОрганизация: %s\nГород: %s\nАдрес: %s",
 		fullNameStr, emailStr, phoneStr, searchResult[index].Title, deptStr, orgStr, searchResult[index].L, searchResult[index].PostalAddress)
 
-	// Обновляем детальную информацию
-	detailsBuffer.SetText(details)
+	// Безопасное обновление текста
+	glib.IdleAdd(func() {
+		// Получаем границы текста
+		start, end := detailsBuffer.GetBounds()
+
+		// Удаляем старый текст
+		detailsBuffer.Delete(start, end)
+
+		// Вставляем новый текст
+		detailsBuffer.Insert(start, details)
+	})
 
 	pathTree := ""
 	strs := strings.Split(searchResult[index].O, ",")
