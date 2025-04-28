@@ -1,5 +1,5 @@
 Name:           ldap-phonebook
-Version:        0.5
+Version:        0.6
 Release:        1%{?dist}
 Summary:        LDAP Phonebook Application
 
@@ -14,8 +14,10 @@ Source0:        %{name}-%{version}.tar.gz
 Program for searching contact data in LDAP.
 
 %prep
-mkdir -p %{name}-%{version}
-tar -C %{name}-%{version} -xzf %{SOURCE0}
+tar -xzf %{SOURCE0}
+#mkdir -p %{name}-%{version}
+#tar -C %{name}-%{version} -xzf %{SOURCE0}
+#mkdir -p %{name}-%{version}
 
 %build
 #go build -o %{name}
