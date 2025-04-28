@@ -68,7 +68,7 @@ type OrgNode struct {
 
 const (
 	appName     = "ldap-phonebook"
-	appVersion  = "0.4"
+	appVersion  = "0.5"
 	defaultIcon = "ldap-phonebook.ico"
 	configFile  = "ldap-phonebook.json"
 )
@@ -96,9 +96,6 @@ func main() {
 
 	// Запускаем Unix socket сервер
 	go startUnixSocketServer()
-
-	// Обработка сигналов для корректного завершения
-	setupSignalHandler()
 
 	// Показываем все виджеты
 	mainWindow.ShowAll()
@@ -321,30 +318,21 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания кнопки поиска: %v\n", err)
 		os.Exit(1)
 	}
-
-	searchButton.Connect("clicked", func() {
-		go performSearch()
-	})
-	// Обработка нажатия Enter в поле поиска
-	searchEntry.Connect("activate", func() {
-		go performSearch()
-	})
+	searchButton.SetTooltipText("Поиск")
 
 	exitButton, err := gtk.ButtonNewWithLabel("Выход")
 	if err != nil {
 		fmt.Printf("Ошибка создания кнопки выхода: %v\n", err)
 		os.Exit(1)
 	}
-
-	exitButton.Connect("clicked", func() {
-		gtk.MainQuit()
-	})
+	exitButton.SetTooltipText("Выход")
 
 	helpButton, err := gtk.ButtonNewWithLabel("?")
 	if err != nil {
 		fmt.Printf("Ошибка создания кнопки помощи: %v\n", err)
 		os.Exit(1)
 	}
+	helpButton.SetTooltipText("О программе")
 
 	// Настройка порядка табуляции
 	searchEntry.SetProperty("can-focus", true)
@@ -474,14 +462,45 @@ func createMainWindow() {
 	mainPaned.Pack2(centerPanel, true, false)
 	mainPaned.SetPosition(int(float64(mainWindow.GetAllocatedWidth()) * 0.5))
 
-	// Настройка обработчиков событий
-	setupEventHandlers()
-	helpButton.Connect("clicked", showAboutDialog)
-
 	searchEntry.GrabFocus()
 	resultsScrolled.SetSizeRequest(-1, 350)
 	// Добавляем главный контейнер в окно
 	mainWindow.Add(mainPaned)
+
+	// Настройка обработчиков событий
+	// Обработка сигналов для корректного завершения
+
+	// Обработка нажатия кнопки О программе
+	helpButton.Connect("clicked", showAboutDialog)
+
+	// Обработка нажатия кнопки поиска
+	searchButton.Connect("clicked", func() {
+		go performSearch()
+	})
+	// Обработка нажатия Enter в поле поиска
+	searchEntry.Connect("activate", func() {
+		go performSearch()
+	})
+	// Обработка нажатия Выход в поле поиск
+	exitButton.Connect("clicked", func() {
+		gtk.MainQuit()
+	})
+	// Обработка выбора в дереве
+	treeView.Connect("row-activated", func() {
+		go onDepartmentSelected()
+	})
+
+	// Обработка выбора в результатах поиска
+	resultsView.Connect("row-activated", func() {
+		go onPersonSelected()
+	})
+
+	// Обработка выбора в результатах поиска
+	resultsView.Connect("cursor-changed", func() {
+		if resultsView.IsFocus() {
+			go onPersonSelected()
+		}
+	})
 
 }
 
@@ -764,18 +783,6 @@ func loadLDAPData() {
 		treeStore.(*gtk.TreeStore).Clear()
 		/////////////////////////////////////////////////////////////////////////////////////
 
-		//	var root *OrgNode
-		//	root = buildOrgTree(sr.Entries)
-		// Populate tree store
-		/*		sort.Slice(sr.Entries, func(i, j int) (less bool) {
-					oI := sr.Entries[i].GetAttributeValue("o")
-					ouI := sr.Entries[i].GetAttributeValue("ou")
-					oJ := sr.Entries[j].GetAttributeValue("o")
-					ouJ := sr.Entries[j].GetAttributeValue("ou")
-					//			return sr.Entries[i].GetAttributeValue("o") < sr.Entries[j].GetAttributeValue("o")
-					return oI < oJ && ouI < ouJ
-				})
-		*/
 		populateTreeStore(treeStore.(*gtk.TreeStore), nil, buildOrgTree(sr.Entries))
 
 		// Добавляем организации и отделы
@@ -805,27 +812,7 @@ func loadLDAPData() {
 }
 
 func setupEventHandlers() {
-	// Обработка выбора в дереве
-	treeView.Connect("row-activated", func() {
-		go onDepartmentSelected()
-	})
 
-	// Обработка выбора в результатах поиска
-	resultsView.Connect("row-activated", func() {
-		go onPersonSelected()
-	})
-
-	// Обработка выбора в результатах поиска
-	resultsView.Connect("cursor-changed", func() {
-		if resultsView.IsFocus() {
-			go onPersonSelected()
-		}
-	})
-
-	// Обработка нажатия Enter в поле поиска
-	searchEntry.Connect("activate", func() {
-		go performSearch()
-	})
 }
 
 func onDepartmentSelected() {
