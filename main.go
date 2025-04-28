@@ -26,6 +26,7 @@ type Config struct {
 	BindDN       string `json:"bind_dn"`
 	BindPassword string `json:"bind_password"`
 	BaseDN       string `json:"base_dn"`
+	SocketFile   string `json:"socket_file"`
 }
 
 var (
@@ -39,7 +40,6 @@ var (
 	detailsBuffer *gtk.TextBuffer
 	indicator     *appindicator.Indicator
 	searchResult  []LDAPEntry
-	isInTray      bool
 )
 
 // LDAPEntry represents a single LDAP entry from the LDIF file
@@ -70,10 +70,12 @@ const (
 	appVersion  = "0.4"
 	defaultIcon = "ldap-phonebook.ico"
 	configFile  = "ldap-phonebook.json"
-	socketFile  = "/tmp/ldap-phonebook.sock"
 )
 
 func main() {
+
+	// Загружаем конфигурацию
+	loadConfig()
 
 	// Проверяем, не запущен ли уже экземпляр программы
 	if isAlreadyRunning() {
@@ -81,19 +83,6 @@ func main() {
 		activateExistingInstance()
 		os.Exit(0)
 	}
-
-	// Создаем конфиг по умолчанию, если файл не существует
-	config = Config{
-		LDAPServer:   "localhost:389",
-		BindDN:       "dc=mail,dc=local",
-		BindPassword: "",
-		BaseDN:       "dc=mail,dc=local",
-	}
-
-	// Загружаем конфигурацию
-	loadConfig()
-
-	isInTray = false
 
 	// Инициализируем GTK
 	gtk.Init(nil)
@@ -121,31 +110,50 @@ func main() {
 }
 
 func loadConfig() {
+
 	// Определяем путь к конфигурационному файлу
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		configDir = "."
+	configPaths := []string{
+		filepath.Join("/etc", appName, configFile),
+		filepath.Join(filepath.Dir(os.Args[0]), configFile),
+		filepath.Join(os.Getenv("HOME"), ".config", appName, configFile),
 	}
-	configPath := filepath.Join(configDir, "ldap-phonebook", "config.json")
 
-	// Читаем конфигурационный файл
-	data, err := ioutil.ReadFile(configPath)
-	if err != nil {
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				log.Printf("Ошибка чтения конфига %s: %v\n", path, err)
+				continue
+			}
 
+			if err := json.Unmarshal(data, &config); err != nil {
+				log.Printf("Ошибка разбора конфига %s: %v\n", path, err)
+				continue
+			}
+
+			configPath = path
+			break
+		}
+	}
+
+	if configPath == "" {
+
+		// Создаем конфиг по умолчанию, если файл не существует
+		config = Config{
+			LDAPServer:   "localhost:389",
+			BindDN:       "cn=admin,dc=mail,dc=local",
+			BindPassword: "123456",
+			BaseDN:       "dc=mail,dc=local",
+			SocketFile:   "/tmp/ldap-phonebook.sock",
+		}
+
+		configPath = filepath.Join(os.Getenv("HOME"), ".config", appName, configFile)
 		// Создаем директорию, если ее нет
 		os.MkdirAll(filepath.Dir(configPath), 0755)
 
 		// Сохраняем конфиг по умолчанию
 		data, _ := json.MarshalIndent(config, "", "  ")
 		ioutil.WriteFile(configPath, data, 0644)
-		return
-	}
-
-	// Парсим конфигурацию
-	err = json.Unmarshal(data, &config)
-	if err != nil {
-		fmt.Printf("Ошибка чтения конфигурации: %v\n", err)
-		os.Exit(1)
 	}
 
 }
@@ -498,6 +506,13 @@ func showAboutDialog() {
 	dialog.SetLicenseType(gtk.LICENSE_MIT_X11)
 	dialog.SetWebsite("https://github.com/imax1000/ldap-phonebook")
 	dialog.SetWebsiteLabel("Официальный сайт")
+
+	var authors []string
+	authors = append(authors, "Maxim Izvekov (maximizvekov@yandex.ru)")
+	dialog.SetAuthors(authors)
+
+	dialog.SetComments("конфигурация: " + configPath)
+
 	err = dialog.SetIconFromFile(defaultIcon)
 	if err != nil {
 		log.Printf("Ошибка загрузки данных иконки: %v\n", err)
@@ -519,7 +534,6 @@ func onWindowDelete() bool {
 
 func minimizeToTray() {
 	mainWindow.Hide()
-	isInTray = true
 }
 
 func restoreFromTray() {
@@ -533,8 +547,6 @@ func restoreFromTray() {
 			mainWindow.SetKeepAbove(false)
 			return false
 		})
-
-		isInTray = false
 	}
 }
 
@@ -589,9 +601,9 @@ func createStatusIndicator() {
 	// Обработка двойного клика
 	exitItem.Connect("activate", func() {
 		if mainWindow.GetVisible() {
-			mainWindow.Hide()
+			minimizeToTray()
 		} else {
-			mainWindow.Present()
+			restoreFromTray()
 		}
 	})
 }
@@ -1155,21 +1167,21 @@ func showErrorDialog(message string) {
 
 func isAlreadyRunning() bool {
 	// Проверяем, существует ли сокет
-	if _, err := os.Stat(socketFile); err == nil {
+	if _, err := os.Stat(config.SocketFile); err == nil {
 		// Пробуем подключиться к сокету
-		conn, err := net.Dial("unix", socketFile)
+		conn, err := net.Dial("unix", config.SocketFile)
 		if err == nil {
 			conn.Close()
 			return true
 		}
 		// Если подключиться не удалось, удаляем старый сокет
-		os.Remove(socketFile)
+		os.Remove(config.SocketFile)
 	}
 	return false
 }
 
 func activateExistingInstance() {
-	conn, err := net.Dial("unix", socketFile)
+	conn, err := net.Dial("unix", config.SocketFile)
 	if err != nil {
 		return
 	}
@@ -1183,13 +1195,13 @@ func activateExistingInstance() {
 
 func startUnixSocketServer() {
 	// Удаляем старый сокет, если он существует
-	os.Remove(socketFile)
+	os.Remove(config.SocketFile)
 
 	// Создаем директорию для сокета, если ее нет
-	os.MkdirAll(filepath.Dir(socketFile), 0755)
+	os.MkdirAll(filepath.Dir(config.SocketFile), 0755)
 
 	// Создаем Unix socket
-	l, err := net.Listen("unix", socketFile)
+	l, err := net.Listen("unix", config.SocketFile)
 	if err != nil {
 		fmt.Printf("Ошибка создания Unix socket: %v\n", err)
 		return
@@ -1197,7 +1209,7 @@ func startUnixSocketServer() {
 	//	defer l.Close()
 
 	// Устанавливаем права на сокет
-	os.Chmod(socketFile, 0600)
+	os.Chmod(config.SocketFile, 0600)
 
 	for {
 		conn, err := l.Accept()

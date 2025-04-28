@@ -1,11 +1,7 @@
 {
   "ldap_server": "localhost:389",
-  "bind_dn": "dc=mail,dc=local",
-  "user": "admin",
-  "password": "123456",
-  "default_search": "б",
-  "window_width": 1200,
-  "window_height": 600,
-  "icon_path": "system-users",
-  "glade_file": "ldap-phonebook.glade"
+  "bind_dn": "cn=admin,dc=mail,dc=local",
+  "bind_password": "123456",
+  "base_dn": "dc=mail,dc=local",
+  "socket_file": "/tmp/ldap-phonebook.sock"
 }
