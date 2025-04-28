@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -310,7 +311,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания поля поиска: %v\n", err)
 		os.Exit(1)
 	}
-	searchEntry.SetProperty("can-focus", true)
+	//	searchEntry.SetProperty("can-focus", true)
 	searchEntry.SetProperty("focus-on-click", true)
 
 	searchEntry.SetPlaceholderText("Поиск по ФИО, email, телефону...")
@@ -373,12 +374,12 @@ func createMainWindow() {
 	// Включаем возможность изменения ширины колонок
 	resultsView.SetProperty("headers-clickable", true)
 	resultsView.SetProperty("reorderable", true)
-
+	resultsView.SetProperty("focus-on-click", true)
 	// Настройка модели результатов
 	listStore, err := gtk.ListStoreNew(
 		glib.TYPE_STRING, // ФИО
-		glib.TYPE_STRING, // Email
 		glib.TYPE_STRING, // Телефон
+		glib.TYPE_STRING, // Email
 		glib.TYPE_STRING, // Отдел
 		glib.TYPE_STRING, // Организация
 	)
@@ -390,17 +391,11 @@ func createMainWindow() {
 	resultsView.SetModel(listStore)
 
 	resultsView.SetEnableSearch(false)
-	// Добавляем колонки
-	//	addColumn(resultsView, "ФИО", 0)
-	//	addColumn(resultsView, "Email", 1)
-	//	addColumn(resultsView, "Телефон", 2)
-	//	addColumn(resultsView, "Отдел", 3)
-	// addColumn(resultsView, "Организация", 4)
 
 	// Добавляем колонки с возможностью изменения ширины
 	addResizableColumn(resultsView, "ФИО", 0)
-	addResizableColumn(resultsView, "Email", 1)
-	addResizableColumn(resultsView, "Телефон", 2)
+	addResizableColumn(resultsView, "Телефон", 1)
+	addResizableColumn(resultsView, "Email", 2)
 	addResizableColumn(resultsView, "Отдел", 3)
 	addResizableColumn(resultsView, "Организация", 4)
 
@@ -629,24 +624,6 @@ func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 
 	treeView.AppendColumn(column)
 }
-
-/*
-	func addColumn(treeView *gtk.TreeView, title string, id int) {
-		renderer, err := gtk.CellRendererTextNew()
-		if err != nil {
-			fmt.Printf("Ошибка создания рендерера для колонки: %v\n", err)
-			return
-		}
-
-		column, err := gtk.TreeViewColumnNewWithAttribute(title, renderer, "text", id)
-		if err != nil {
-			fmt.Printf("Ошибка создания колонки %s: %v\n", title, err)
-			return
-		}
-
-		treeView.AppendColumn(column)
-	}
-*/
 
 func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	root := &OrgNode{
@@ -975,17 +952,26 @@ func performSearch() {
 	filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
 
 	// Ищем людей
-	searchPeople(filter)
+	if searchPeople(filter) == 0 {
+		text = ConvertString(text)
+		// Формируем фильтр для поиска
+		filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
+
+		// Ищем людей
+		searchPeople(filter)
+	}
 }
 
-func searchPeople(filter string) {
+func searchPeople(text string) int {
+
+	filter := text
 	// Подключаемся к LDAP серверу
 	l, err := ldap.Dial("tcp", config.LDAPServer)
 	if err != nil {
 		glib.IdleAdd(func() {
 			showErrorDialog("Ошибка подключения к LDAP серверу: " + err.Error())
 		})
-		return
+		return -1
 	}
 	defer l.Close()
 
@@ -995,7 +981,7 @@ func searchPeople(filter string) {
 		glib.IdleAdd(func() {
 			showErrorDialog("Ошибка аутентификации в LDAP: " + err.Error())
 		})
-		return
+		return -1
 	}
 
 	// Поиск людей
@@ -1012,7 +998,7 @@ func searchPeople(filter string) {
 		glib.IdleAdd(func() {
 			showErrorDialog("Ошибка поиска людей: " + err.Error())
 		})
-		return
+		return -1
 	}
 
 	// Обновляем результаты в основном потоке GTK
@@ -1064,8 +1050,8 @@ func searchPeople(filter string) {
 				[]int{0, 1, 2, 3, 4},
 				[]interface{}{
 					entry.CN,
-					entry.Mail,
 					entry.TelephoneNumber,
+					entry.Mail,
 					entry.OU,
 					strings.Replace(strings.Replace(entry.O, "&#039;", "'", -1), "&quot;", "\"", -1),
 				})
@@ -1079,7 +1065,7 @@ func searchPeople(filter string) {
 		// Удаляем старый текст
 		detailsBuffer.Delete(start, end)
 	})
-
+	return len(sr.Entries)
 }
 
 func onPersonSelected() {
@@ -1330,4 +1316,80 @@ func findStrOnLevel(store *gtk.TreeStore, str string, path string) (int, bool) {
 		ok = store.IterNext(iter)
 	}
 	return -1, false
+}
+
+var ConvertMap = map[rune]rune{
+	'q':  'й',
+	'w':  'ц',
+	'e':  'у',
+	'r':  'к',
+	't':  'е',
+	'y':  'н',
+	'u':  'г',
+	'i':  'ш',
+	'o':  'щ',
+	'p':  'з',
+	'[':  'х',
+	']':  'ъ',
+	'a':  'ф',
+	's':  'ы',
+	'd':  'в',
+	'f':  'а',
+	'g':  'п',
+	'h':  'р',
+	'j':  'о',
+	'k':  'л',
+	'l':  'д',
+	';':  'ж',
+	'\'': 'э',
+	'z':  'я',
+	'x':  'ч',
+	'c':  'с',
+	'v':  'м',
+	'b':  'и',
+	'n':  'т',
+	'm':  'ь',
+	',':  'б',
+	'.':  'ю',
+	'Q':  'Й',
+	'W':  'Ц',
+	'E':  'У',
+	'R':  'К',
+	'T':  'Е',
+	'Y':  'Н',
+	'U':  'Г',
+	'I':  'Ш',
+	'O':  'Щ',
+	'P':  'З',
+	'{':  'Х',
+	'}':  'Ъ',
+	'A':  'Ф',
+	'S':  'Ы',
+	'D':  'В',
+	'F':  'А',
+	'G':  'П',
+	'H':  'Р',
+	'J':  'О',
+	'K':  'Л',
+	'L':  'Д',
+	':':  'Ж',
+	'"':  'Э',
+	'Z':  'Я',
+	'X':  'Ч',
+	'C':  'С',
+	'V':  'М',
+	'B':  'И',
+	'N':  'Т',
+	'M':  'Ь',
+	'<':  'Б',
+	'>':  'Ю',
+}
+
+func ConvertString(in string) string {
+
+	var buffer bytes.Buffer
+	for _, ch := range in {
+		buffer.WriteString(string(ConvertMap[ch]))
+	}
+	return buffer.String()
 }
