@@ -30,6 +30,7 @@ type Config struct {
 
 var (
 	config        Config
+	configPath    string
 	mainWindow    *gtk.Window
 	treeView      *gtk.TreeView
 	searchEntry   *gtk.Entry
@@ -37,13 +38,12 @@ var (
 	detailsView   *gtk.TextView
 	detailsBuffer *gtk.TextBuffer
 	indicator     *appindicator.Indicator
-	searchResult  []LDIFEntry
-
-	isInTray bool
+	searchResult  []LDAPEntry
+	isInTray      bool
 )
 
-// LDIFEntry represents a single LDAP entry from the LDIF file
-type LDIFEntry struct {
+// LDAPEntry represents a single LDAP entry from the LDIF file
+type LDAPEntry struct {
 	DN              string
 	ObjectClass     string
 	SN              string
@@ -635,77 +635,6 @@ func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 		treeView.AppendColumn(column)
 	}
 */
-// Добавляем эту функцию для сортировки элементов дерева
-func sortTreeStore(store *gtk.TreeStore) {
-	// Получаем итератор корневого элемента
-	var rootIter *gtk.TreeIter
-	rootIter, ok := store.GetIterFirst()
-	if !ok {
-		return // Дерево пустое
-	}
-
-	// Собираем все элементы первого уровня (организации)
-	var orgs []orgItem
-	for {
-		var orgName string
-		val, _ := store.GetValue(rootIter, 0)
-		orgName, _ = val.GetString()
-
-		// Собираем все дочерние элементы (отделы)
-		var depts []string
-		var childIter gtk.TreeIter
-		if store.IterChildren(&childIter, rootIter) {
-			for {
-				val, _ := store.GetValue(&childIter, 0)
-				deptName, _ := val.GetString()
-				depts = append(depts, deptName)
-
-				if !store.IterNext(&childIter) {
-					break
-				}
-			}
-		}
-
-		// Сортируем отделы
-		sort.Strings(depts)
-
-		orgs = append(orgs, orgItem{
-			name:  orgName,
-			depts: depts,
-			iter:  rootIter,
-		})
-
-		if !store.IterNext(rootIter) {
-			break
-		}
-	}
-
-	// Сортируем организации по названию
-	sort.Slice(orgs, func(i, j int) bool {
-		return orgs[i].name < orgs[j].name
-	})
-
-	// Создаем новую модель с отсортированными данными
-	newStore, _ := gtk.TreeStoreNew(glib.TYPE_STRING)
-	for _, org := range orgs {
-		newOrgIter := newStore.Append(nil)
-		newStore.SetValue(newOrgIter, 0, org.name)
-
-		for _, dept := range org.depts {
-			newDeptIter := newStore.Append(newOrgIter)
-			newStore.SetValue(newDeptIter, 0, dept)
-		}
-	}
-
-	// Заменяем модель в дереве
-	treeView.SetModel(newStore)
-}
-
-type orgItem struct {
-	name  string
-	depts []string
-	iter  *gtk.TreeIter
-}
 
 func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	root := &OrgNode{
@@ -783,7 +712,7 @@ func populateTreeStore(store *gtk.TreeStore, parent *gtk.TreeIter, node *OrgNode
 		s = append(s, child.Name)
 	}
 	sort.Slice(s, func(i, j int) (less bool) {
-		return s[i] < s[j]
+		return strings.ToLower(s[i]) < strings.ToLower(s[j])
 	})
 
 	//	for _, child := range node.Children {
@@ -1100,7 +1029,7 @@ func searchPeople(filter string) {
 							strings.Replace(strings.Replace(entry.GetAttributeValue("o"), "&#039;", "'", -1), "&quot;", "\"", -1),
 						})
 			*/
-			var item LDIFEntry
+			var item LDAPEntry
 			item.CN = entry.GetAttributeValue("cn")
 			item.Mail = entry.GetAttributeValue("mail")
 			item.OU = entry.GetAttributeValue("ou")
@@ -1218,7 +1147,7 @@ func showErrorDialog(message string) {
 		gtk.DIALOG_MODAL,
 		gtk.MESSAGE_ERROR,
 		gtk.BUTTONS_OK,
-		message,
+		"%s", message,
 	)
 	dialog.Run()
 	dialog.Destroy()
@@ -1323,11 +1252,15 @@ func selectByPath(pathStr string) {
 		}
 	}
 	model, err := treeView.GetModel()
+	if err != nil {
+		return
+	}
+
 	var store *gtk.TreeStore
 
 	store, ok := model.(*gtk.TreeStore)
 	if !ok {
-		fmt.Errorf("модель не является TreeStore")
+		fmt.Println("модель не является TreeStore")
 		return
 	}
 
@@ -1359,9 +1292,8 @@ func selectByPath(pathStr string) {
 
 	//прокручиваем до элемента
 	treeView.ScrollToCell(path, nil, true, 0.5, 0.5)
-
-	return
 }
+
 func getTextIter(store *gtk.TreeStore, iter *gtk.TreeIter) (string, error) {
 	val, err := store.GetValue(iter, 0)
 	if err != nil {
