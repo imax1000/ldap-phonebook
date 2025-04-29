@@ -69,7 +69,7 @@ type OrgNode struct {
 
 const (
 	appName    = "ldap-phonebook"
-	appVersion = "0.6"
+	appVersion = "0.7"
 	configFile = "ldap-phonebook.json"
 )
 
@@ -138,9 +138,11 @@ func loadConfig() {
 
 		// Создаем конфиг по умолчанию, если файл не существует
 		config = Config{
-			LDAPServer:   "localhost:389",
-			BindDN:       "cn=user-ro,dc=mail,dc=local",
-			BindPassword: "ro_pass",
+			LDAPServer: "abook:389",
+			BindDN:     "dc=mail,dc=local",
+			//			BindDN:       "cn=user-ro,dc=mail,dc=local",
+			//			BindPassword: "ro_pass",
+			BindPassword: "",
 			BaseDN:       "dc=mail,dc=local",
 			SocketFile:   "/tmp/ldap-phonebook.sock",
 		}
@@ -287,7 +289,7 @@ func createMainWindow() {
 	}
 
 	// Статический текст над строкой поиска
-	searchLabel, err := gtk.LabelNew("Панель поиска")
+	searchLabel, err := gtk.LabelNew(" Панель поиска")
 	if err != nil {
 		fmt.Printf("Ошибка создания метки: %v\n", err)
 		os.Exit(1)
@@ -309,6 +311,8 @@ func createMainWindow() {
 	}
 	//	searchEntry.SetProperty("can-focus", true)
 	searchEntry.SetProperty("focus-on-click", true)
+	searchEntry.SetProperty("secondary-icon-stock", "gtk-close")
+	searchEntry.SetProperty("secondary-icon-tooltip-text", "Очистить поиск")
 
 	searchEntry.SetPlaceholderText("Поиск по ФИО, email, телефону...")
 
@@ -318,6 +322,8 @@ func createMainWindow() {
 		os.Exit(1)
 	}
 	searchButton.SetTooltipText("Поиск")
+	searchButton.SetProperty("label", "gtk-find")
+	searchButton.SetProperty("use-stock", true)
 
 	exitButton, err := gtk.ButtonNewWithLabel("Выход")
 	if err != nil {
@@ -325,6 +331,8 @@ func createMainWindow() {
 		os.Exit(1)
 	}
 	exitButton.SetTooltipText("Выход")
+	exitButton.SetProperty("label", "gtk-quit")
+	exitButton.SetProperty("use-stock", true)
 
 	helpButton, err := gtk.ButtonNewWithLabel("?")
 	if err != nil {
@@ -482,7 +490,10 @@ func createMainWindow() {
 	searchEntry.Connect("activate", func() {
 		go performSearch()
 	})
-	// Обработка нажатия Выход в поле поиск
+	// Обработка нажатия Enter в поле поиска
+	searchEntry.Connect("icon-press", func() {
+		go cleanText()
+	}) // Обработка нажатия Выход в поле поиск
 	exitButton.Connect("clicked", func() {
 		gtk.MainQuit()
 	})
@@ -906,13 +917,6 @@ func onDepartmentSelected() {
 		return
 	}
 
-	// Получаем итератор текущего элемента
-	//iter, err = treeStore.GetIter(path)
-	//if err != nil {
-	//log.Println("Ошибка итератора:", err)
-	//return
-	//}
-
 	value, err := model.(*gtk.TreeStore).GetValue(iter, 0)
 	if err != nil {
 		return
@@ -993,11 +997,13 @@ func performSearch() {
 	// Ищем людей
 	if searchPeople(filter) == 0 {
 		text = ConvertString(text)
-		// Формируем фильтр для поиска
-		filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
+		if len(text) > 0 {
+			// Формируем фильтр для поиска
+			filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
 
-		// Ищем людей
-		searchPeople(filter)
+			// Ищем людей
+			searchPeople(filter)
+		}
 	}
 }
 
@@ -1055,17 +1061,6 @@ func searchPeople(text string) int {
 		// Добавляем результаты
 		for _, entry := range sr.Entries {
 
-			/*		iter := listStore.(*gtk.ListStore).Append()
-					listStore.(*gtk.ListStore).Set(iter,
-						[]int{0, 1, 2, 3, 4},
-						[]interface{}{
-							entry.GetAttributeValue("cn"),
-							entry.GetAttributeValue("mail"),
-							entry.GetAttributeValue("telephoneNumber"),
-							entry.GetAttributeValue("ou"),
-							strings.Replace(strings.Replace(entry.GetAttributeValue("o"), "&#039;", "'", -1), "&quot;", "\"", -1),
-						})
-			*/
 			var item LDAPEntry
 			item.CN = entry.GetAttributeValue("cn")
 			item.Mail = entry.GetAttributeValue("mail")
@@ -1106,7 +1101,24 @@ func searchPeople(text string) int {
 	})
 	return len(sr.Entries)
 }
+func cleanText() {
+	// Безопасное обновление текста
+	glib.IdleAdd(func() {
+		// Обновляем результаты в основном потоке GTK
 
+		// Вставляем новый текст
+		searchEntry.SetText("")
+
+		listStore, err := resultsView.GetModel()
+		if err != nil {
+			return
+		}
+
+		// Очищаем список
+		listStore.(*gtk.ListStore).Clear()
+
+	})
+}
 func onPersonSelected() {
 
 	selection, err := resultsView.GetSelection()
@@ -1423,9 +1435,13 @@ func ConvertString(in string) string {
 
 	var buffer bytes.Buffer
 	for _, ch := range in {
-		buffer.WriteString(string(ConvertMap[ch]))
+		r, ok := ConvertMap[ch]
+		if ok {
+			buffer.WriteString(string(r))
+		}
 	}
-	return buffer.String()
+	str := buffer.String()
+	return strings.TrimSpace(str)
 }
 
 const (

@@ -1,7 +1,7 @@
 {
-  "ldap_server": "localhost:389",
-  "bind_dn": "cn=user-ro,dc=mail,dc=local",
-  "bind_password": "ro_pass",
+  "ldap_server": "abook:389",
+  "bind_dn": "dc=mail,dc=local",
+  "bind_password": "",
   "base_dn": "dc=mail,dc=local",
   "socket_file": "/tmp/ldap-phonebook.sock"
 }
