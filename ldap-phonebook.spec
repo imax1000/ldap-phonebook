@@ -5,7 +5,7 @@ Summary:        LDAP Phonebook Application
 
 License:        MIT X11 license
 URL:            https://github.com/imax1000/ldap-phonebook
-Source0:        %{name}-%{version}.tar.gz
+Source0:        %{name}.tar.gz
 
 #BuildRequires:  golang
 #Requires:       
