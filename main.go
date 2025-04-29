@@ -222,9 +222,8 @@ func createMainWindow() {
 	}
 
 	treeView.AppendColumn(column)
-	//	treeView.SetEnableSearch(false)
-	// Включаем сортировку в дереве
-	treeView.SetEnableSearch(true)
+	treeView.SetEnableSearch(false)
+
 	treeView.SetSearchColumn(0)
 	treeView.SetReorderable(false) // Запрещаем перетаскивание, чтобы сохранить сортировку
 
