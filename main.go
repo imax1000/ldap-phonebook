@@ -363,6 +363,8 @@ func createMainWindow() {
 	resultsView.SetProperty("headers-clickable", true)
 	resultsView.SetProperty("reorderable", true)
 	resultsView.SetProperty("focus-on-click", true)
+	resultsView.SetProperty("activate-on-single-click", true)
+
 	// Настройка модели результатов
 	listStore, err := gtk.ListStoreNew(
 		glib.TYPE_STRING, // ФИО
@@ -496,11 +498,11 @@ func createMainWindow() {
 	})
 
 	// Обработка выбора в результатах поиска
-	resultsView.Connect("cursor-changed", func() {
-		if resultsView.IsFocus() {
-			go onPersonSelected()
-		}
-	})
+	//	resultsView.Connect("cursor-changed", func() {
+	//		if resultsView.IsFocus() {
+	//			go onPersonSelected()
+	//		}
+	//	})
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
