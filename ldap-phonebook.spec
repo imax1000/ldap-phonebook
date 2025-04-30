@@ -1,5 +1,5 @@
 Name:           ldap-phonebook
-Version:        0.7
+Version:        0.8
 Release:        1%{?dist}
 Summary:        LDAP Phonebook Application
 

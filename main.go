@@ -69,7 +69,7 @@ type OrgNode struct {
 
 const (
 	appName    = "ldap-phonebook"
-	appVersion = "0.7"
+	appVersion = "0.8"
 	configFile = "ldap-phonebook.json"
 )
 
@@ -209,6 +209,10 @@ func createMainWindow() {
 	}
 
 	treeView.SetModel(treeStore)
+
+	parent, _ := treeStore.GetIterFirst()
+	iter := treeStore.Append(parent)
+	treeStore.SetValue(iter, 0, "Loading...")
 
 	// Добавляем колонку
 	renderer, err := gtk.CellRendererTextNew()
@@ -479,6 +483,16 @@ func createMainWindow() {
 	// Настройка обработчиков событий
 	// Обработка сигналов для корректного завершения
 
+	// Обработчик нажатия клавиш для главного окна
+	mainWindow.Connect("key-press-event", func(window *gtk.Window, event *gdk.Event) {
+		keyEvent := gdk.EventKeyNewFromEvent(event)
+
+		// Обработка Esc
+		if keyEvent.KeyVal() == gdk.KEY_Escape {
+			minimizeToTray()
+		}
+	})
+
 	// Обработка нажатия кнопки О программе
 	helpButton.Connect("clicked", showAboutDialog)
 
@@ -492,7 +506,7 @@ func createMainWindow() {
 	})
 	// Обработка нажатия Enter в поле поиска
 	searchEntry.Connect("icon-press", func() {
-		go cleanText()
+		go clearSearch()
 	}) // Обработка нажатия Выход в поле поиск
 	exitButton.Connect("clicked", func() {
 		gtk.MainQuit()
@@ -508,11 +522,11 @@ func createMainWindow() {
 	})
 
 	// Обработка выбора в результатах поиска
-	//	resultsView.Connect("cursor-changed", func() {
-	//		if resultsView.IsFocus() {
-	//			go onPersonSelected()
-	//		}
-	//	})
+	resultsView.Connect("cursor-changed", func() {
+		if resultsView.IsFocus() {
+			go onPersonSelected()
+		}
+	})
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -715,6 +729,12 @@ func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 	treeView.AppendColumn(column)
 }
 
+func quotRemove(str string) string {
+	return strings.Replace(strings.Replace(str, "&#039;", "'", -1), "&quot;", "\"", -1)
+}
+func quotAdd(str string) string {
+	return strings.Replace(strings.Replace(str, "'", "&#039;", -1), "\"", "&quot;", -1)
+}
 func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	root := &OrgNode{
 		Name:     "Организации и отделы",
@@ -722,12 +742,9 @@ func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	}
 
 	for _, entry := range entries {
-		str := entry.GetAttributeValue("o")
-		if str == "filial" || len(str) == 0 {
-			continue
-		}
+		str := quotRemove(entry.GetAttributeValue("o"))
 
-		orgParts := strings.SplitN(entry.GetAttributeValue("o"), ",", 2)
+		orgParts := strings.SplitN(str, ",", 2)
 		orgName := strings.TrimSpace(orgParts[0])
 		var deptName string
 		if len(orgParts) > 1 {
@@ -757,20 +774,22 @@ func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 			}
 
 			// Add OU under department
-			if entry.GetAttributeValue("ou") != "" {
-				if _, exists := deptNode.Children[entry.GetAttributeValue("ou")]; !exists {
-					deptNode.Children[entry.GetAttributeValue("ou")] = &OrgNode{
-						Name:     entry.GetAttributeValue("ou"),
+			deptName = quotRemove(entry.GetAttributeValue("ou"))
+			if deptName != "" {
+				if _, exists := deptNode.Children[deptName]; !exists {
+					deptNode.Children[deptName] = &OrgNode{
+						Name:     deptName,
 						Children: make(map[string]*OrgNode),
 					}
 				}
 			}
 		} else {
+			deptName = quotRemove(entry.GetAttributeValue("ou"))
 			// Organization has no departments, add OU directly under org
-			if entry.GetAttributeValue("ou") != "" {
-				if _, exists := orgNode.Children[entry.GetAttributeValue("ou")]; !exists {
-					orgNode.Children[entry.GetAttributeValue("ou")] = &OrgNode{
-						Name:     entry.GetAttributeValue("ou"),
+			if deptName != "" {
+				if _, exists := orgNode.Children[deptName]; !exists {
+					orgNode.Children[deptName] = &OrgNode{
+						Name:     deptName,
 						Children: make(map[string]*OrgNode),
 					}
 				}
@@ -854,22 +873,12 @@ func loadLDAPData() {
 
 		// Добавляем организации и отделы
 		for _, entry := range sr.Entries {
-			orgName := entry.GetAttributeValue("o")
+			orgName := quotRemove(entry.GetAttributeValue("o"))
 			if orgName == "" {
 				continue
 			}
 
 		}
-		/*
-			//			glib.IdleAdd(func() {
-			// Получаем текущую модель
-			model, _ := treeView.GetModel()
-			store := model.(*gtk.TreeStore)
-
-			// Сортируем элементы
-			sortTreeStore(store)
-			//			})
-		*/
 		// Раскрытие первого уровня
 		iter, _ := treeStore.(*gtk.TreeStore).GetIterFirst()
 		path, _ := treeStore.(*gtk.TreeStore).GetPath(iter)
@@ -917,11 +926,12 @@ func onDepartmentSelected() {
 		return
 	}
 
-	value, err := model.(*gtk.TreeStore).GetValue(iter, 0)
+	itemName, err := getTextIter(model.(*gtk.TreeStore), iter)
+	//	value, err := model.(*gtk.TreeStore).GetValue(iter, 0)
 	if err != nil {
 		return
 	}
-	itemName, _ := value.GetString()
+	//	itemName, _ := value.GetString()
 
 	var rootName, parentName string
 	// Проверяем родителя
@@ -970,13 +980,16 @@ func onDepartmentSelected() {
 
 	if depth == 4 {
 		// Ищем людей в отделе
+		//		searchPeople(quotAdd("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))"))
 		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && !hasChildren {
 		// Ищем людей в отделе
+		//		searchPeople(quotAdd("(&(o=" + parentName + ")(ou=" + itemName + "))"))
 		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && hasChildren {
 		// Ищем людей в отделе
 		searchPeople("(o=" + parentName + ", " + itemName + ")")
+		//		searchPeople(quotAdd("(o=" + parentName + ", " + itemName + ")"))
 	}
 
 }
@@ -1033,7 +1046,7 @@ func searchPeople(text string) int {
 	searchRequest := ldap.NewSearchRequest(
 		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		"(&(objectClass=inetOrgPerson)"+filter+")",
+		quotAdd("(&(objectClass=inetOrgPerson)"+filter+")"),
 		[]string{"cn", "mail", "telephoneNumber", "ou", "o", "title", "l", "postalAddress"},
 		nil,
 	)
@@ -1064,12 +1077,12 @@ func searchPeople(text string) int {
 			var item LDAPEntry
 			item.CN = entry.GetAttributeValue("cn")
 			item.Mail = entry.GetAttributeValue("mail")
-			item.OU = entry.GetAttributeValue("ou")
+			item.OU = quotRemove(entry.GetAttributeValue("ou"))
 			item.L = entry.GetAttributeValue("l")
 			item.Title = entry.GetAttributeValue("title")
-			item.O = entry.GetAttributeValue("o")
+			item.O = quotRemove(entry.GetAttributeValue("o"))
 			item.TelephoneNumber = entry.GetAttributeValue("telephoneNumber")
-			item.PostalAddress = entry.GetAttributeValue("postalAddress")
+			item.PostalAddress = quotRemove(entry.GetAttributeValue("postalAddress"))
 
 			searchResult = append(searchResult, item)
 		}
@@ -1087,7 +1100,7 @@ func searchPeople(text string) int {
 					entry.TelephoneNumber,
 					entry.Mail,
 					entry.OU,
-					strings.Replace(strings.Replace(entry.O, "&#039;", "'", -1), "&quot;", "\"", -1),
+					entry.O,
 				})
 		}
 	})
@@ -1101,7 +1114,7 @@ func searchPeople(text string) int {
 	})
 	return len(sr.Entries)
 }
-func cleanText() {
+func clearSearch() {
 	// Безопасное обновление текста
 	glib.IdleAdd(func() {
 		// Обновляем результаты в основном потоке GTK
@@ -1116,6 +1129,14 @@ func cleanText() {
 
 		// Очищаем список
 		listStore.(*gtk.ListStore).Clear()
+
+		// Получаем границы текста
+		start, end := detailsBuffer.GetBounds()
+
+		// Удаляем старый текст
+		detailsBuffer.Delete(start, end)
+
+		searchEntry.GrabFocusWithoutSelecting()
 
 	})
 }

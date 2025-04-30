@@ -41,13 +41,65 @@ rpmbuild -bb ~/rpmbuild/SPECS/ldap-phonebook.spec
 
 
 
+# Доп. настройки для LDAP-сервера
 
 
+- Увеличение лимита
+```
+dn: cn=config
+changetype: modify
+replace: olcSizeLimit
+olcSizeLimit: unlimited
+
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+replace: olcLimits
+olcLimits: {0} * size=unlimited
+```
+Подробнее по ссылке https://www.openldap.org/doc/admin26/limits.html
+
+- Анонимный доступ
+```
+dn: cn=config
+changetype: modify
+add: olcAllows
+olcAllows: bind_anon_cred bind_anon_dn update_anon
+
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+replace: olcAccess
+olcAccess: {2}to * by * read
+```
+Подробнее по ссылкам:
+
+https://www.openldap.org/doc/admin24/security.html
+
+https://www.openldap.org/doc/admin24/access-control.html
 
 
+- База поиска
+```
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+replace: olcDefaultSearchBase
+olcDefaultSearchBase: ou=abook,dc=mail,dc=local
+```
 
+- Внесение настроек
+1. Первый вариант
+```bash
+ldapmodify -Y EXTERNAL -H ldapi:/// <<EOF
+dn:           cn=config
+changetype:   modify
+replace:      olcLogLevel
+olcLogLevel:  256
+EOF
+```
 
-
+2. Второй вариант
+```bash
+ldapmodify -h localhost -p 389 -D cn=admin,cn=config -w config_pass -f config.ldif
+```
 
 
 
