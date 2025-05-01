@@ -315,7 +315,11 @@ func createMainWindow() {
 	}
 	//	searchEntry.SetProperty("can-focus", true)
 	searchEntry.SetProperty("focus-on-click", true)
-	searchEntry.SetProperty("secondary-icon-stock", "gtk-close")
+	searchEntry.SetProperty("primary-icon-stock", "gtk-find")
+	searchEntry.SetProperty("primary-icon-activatable", false)
+	//	searchEntry.SetProperty("primary-icon-sensitive", false)
+
+	searchEntry.SetProperty("secondary-icon-stock", "gtk-clear")
 	searchEntry.SetProperty("secondary-icon-tooltip-text", "Очистить поиск")
 
 	searchEntry.SetPlaceholderText("Поиск по ФИО, email, телефону...")
@@ -860,16 +864,30 @@ func loadLDAPData() {
 	// Обновляем дерево в основном потоке GTK
 	glib.IdleAdd(func() {
 
-		treeStore, err := treeView.GetModel()
+		// Получаем модель
+		model, err := treeView.GetModel()
+		if err != nil {
+			log.Println("Ошибка модели:", err)
+			return
+		}
+
+		var store *gtk.TreeStore
+		// Приводим к TreeStore
+		store, ok := model.(*gtk.TreeStore)
+		if !ok {
+			log.Println("Неверный тип модели")
+			return
+		}
+
 		if err != nil {
 			return
 		}
 
 		// Очищаем дерево
-		treeStore.(*gtk.TreeStore).Clear()
+		store.Clear()
 		/////////////////////////////////////////////////////////////////////////////////////
 
-		populateTreeStore(treeStore.(*gtk.TreeStore), nil, buildOrgTree(sr.Entries))
+		populateTreeStore(store, nil, buildOrgTree(sr.Entries))
 
 		// Добавляем организации и отделы
 		for _, entry := range sr.Entries {
@@ -880,10 +898,22 @@ func loadLDAPData() {
 
 		}
 		// Раскрытие первого уровня
-		iter, _ := treeStore.(*gtk.TreeStore).GetIterFirst()
-		path, _ := treeStore.(*gtk.TreeStore).GetPath(iter)
+		iter, _ := store.GetIterFirst()
+		path, _ := store.GetPath(iter)
 		treeView.ExpandRow(path, false)
-
+		/*
+			// Раскрытие второго уровня
+			iter, err = store.GetIterFromString("0:0")
+			if err != nil {
+				return
+			}
+			ok = true
+			for index := 0; ok; index++ {
+				path, _ := store.GetPath(iter)
+				treeView.ExpandRow(path, false)
+				ok = store.IterNext(iter)
+			}
+		*/
 	})
 }
 
@@ -1129,6 +1159,7 @@ func clearSearch() {
 
 		// Очищаем список
 		listStore.(*gtk.ListStore).Clear()
+		searchResult = nil
 
 		// Получаем границы текста
 		start, end := detailsBuffer.GetBounds()
