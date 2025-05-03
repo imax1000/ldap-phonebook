@@ -360,12 +360,12 @@ func createMainWindow() {
 	searchBox.PackStart(exitButton, false, false, 0)
 	searchBox.PackStart(helpButton, false, false, 0)
 
-	searchPanel.PackStart(searchBox, false, false, 0)
+	//	searchPanel.PackStart(searchBox, false, false, 0)
 	//topCenterBox.PackStart(searchPanel, false, false, 0)
 
-	searchBox.PackStart(searchEntry, true, true, 0)
-	searchBox.PackStart(searchButton, false, false, 0)
-	searchBox.PackStart(exitButton, false, false, 0)
+	//	searchBox.PackStart(searchEntry, true, true, 0)
+	//	searchBox.PackStart(searchButton, false, false, 0)
+	//	searchBox.PackStart(exitButton, false, false, 0)
 
 	// Центральная часть - результаты поиска
 	resultsView, err = gtk.TreeViewNew()
@@ -385,6 +385,7 @@ func createMainWindow() {
 		glib.TYPE_STRING, // ФИО
 		glib.TYPE_STRING, // Телефон
 		glib.TYPE_STRING, // Email
+		glib.TYPE_STRING, // Должность
 		glib.TYPE_STRING, // Отдел
 		glib.TYPE_STRING, // Организация
 	)
@@ -401,8 +402,9 @@ func createMainWindow() {
 	addResizableColumn(resultsView, "ФИО", 0)
 	addResizableColumn(resultsView, "Телефон", 1)
 	addResizableColumn(resultsView, "Email", 2)
-	addResizableColumn(resultsView, "Отдел", 3)
-	addResizableColumn(resultsView, "Организация", 4)
+	addResizableColumn(resultsView, "Должность", 3)
+	addResizableColumn(resultsView, "Отдел", 4)
+	addResizableColumn(resultsView, "Организация", 5)
 
 	// Прокручиваемая область для результатов
 	resultsScrolled, err := gtk.ScrolledWindowNew(nil, nil)
@@ -410,7 +412,7 @@ func createMainWindow() {
 		fmt.Printf("Ошибка создания прокручиваемой области результатов: %v\n", err)
 		os.Exit(1)
 	}
-	resultsScrolled.SetSizeRequest(-1, 500)
+	//	resultsScrolled.SetSizeRequest(-1, 500)
 	resultsScrolled.Add(resultsView)
 	resultsScrolled.SetSizeRequest(-1, 370)
 
@@ -718,6 +720,8 @@ func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 		fmt.Printf("Ошибка создания рендерера для колонки: %v\n", err)
 		return
 	}
+
+	//	renderer.SetProperty("ellipsize", pango.ELLIPSIZE_END)
 
 	column, err := gtk.TreeViewColumnNewWithAttribute(title, renderer, "text", id)
 	if err != nil {
@@ -1124,15 +1128,17 @@ func searchPeople(text string) int {
 		for _, entry := range searchResult {
 			iter := listStore.(*gtk.ListStore).Append()
 			listStore.(*gtk.ListStore).Set(iter,
-				[]int{0, 1, 2, 3, 4},
-				[]interface{}{
+				[]int{0, 1, 2, 3, 4, 5},
+				[]any{
 					entry.CN,
 					entry.TelephoneNumber,
 					entry.Mail,
+					entry.Title,
 					entry.OU,
 					entry.O,
 				})
 		}
+		resultsView.ColumnsAutosize()
 	})
 	// Безопасное обновление текста
 	glib.IdleAdd(func() {
@@ -1159,6 +1165,9 @@ func clearSearch() {
 
 		// Очищаем список
 		listStore.(*gtk.ListStore).Clear()
+
+		resultsView.ColumnsAutosize()
+
 		searchResult = nil
 
 		// Получаем границы текста
@@ -1196,12 +1205,14 @@ func onPersonSelected() {
 	fullName, _ := model.(*gtk.TreeModel).GetValue(iter, 0)
 	email, _ := model.(*gtk.TreeModel).GetValue(iter, 1)
 	phone, _ := model.(*gtk.TreeModel).GetValue(iter, 2)
-	department, _ := model.(*gtk.TreeModel).GetValue(iter, 3)
-	organization, _ := model.(*gtk.TreeModel).GetValue(iter, 4)
+	//	title, _ := model.(*gtk.TreeModel).GetValue(iter, 3)
+	department, _ := model.(*gtk.TreeModel).GetValue(iter, 4)
+	organization, _ := model.(*gtk.TreeModel).GetValue(iter, 5)
 
 	fullNameStr, _ := fullName.GetString()
 	emailStr, _ := email.GetString()
 	phoneStr, _ := phone.GetString()
+	//	titleStr, _ := title.GetString()
 	deptStr, _ := department.GetString()
 	orgStr, _ := organization.GetString()
 
