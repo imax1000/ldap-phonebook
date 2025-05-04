@@ -152,7 +152,19 @@ rpmbuild -bb ~/rpmbuild/SPECS/ldap-phonebook.spec
 # Доп.настройки для LDAP-сервера
 
 
-- Увеличение лимита
+##Увеличение лимита
+
+- Если openldap использует slapd.conf, добавить строку ниже в slapd.conf
+```
+sizelimit 5000
+```
+или
+```
+sizelimit unlimited
+```
+
+- Если openldap использует cn=config.ldif, добавить следующую конфигурацию
+
 ```
 dn: cn=config
 changetype: modify
