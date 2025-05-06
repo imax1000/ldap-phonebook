@@ -1056,6 +1056,8 @@ func performSearch() {
 
 func searchPeople(text string) int {
 
+	fmt.Print(text)
+
 	filter := text
 	// Подключаемся к LDAP серверу
 	l, err := ldap.Dial("tcp", config.LDAPServer)
