@@ -1015,11 +1015,13 @@ func onDepartmentSelected() {
 	if depth == 4 {
 		// Ищем людей в отделе
 		//		searchPeople(quotAdd("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))"))
-		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
+		searchPeople("(ou=" + itemName + ")")
+		//		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && !hasChildren {
 		// Ищем людей в отделе
 		//		searchPeople(quotAdd("(&(o=" + parentName + ")(ou=" + itemName + "))"))
-		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
+		searchPeople("(ou=" + itemName + ")")
+		//		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && hasChildren {
 		// Ищем людей в отделе
 		searchPeople("(o=" + parentName + ", " + itemName + ")")
@@ -1058,8 +1060,8 @@ func searchPeople(text string) int {
 
 	fmt.Print(text)
 
-	text = quotAdd(text)
-	fmt.Print(text)
+	//	text = quotAdd(text)
+	//	fmt.Print(text)
 
 	filter := text
 	// Подключаемся к LDAP серверу
