@@ -69,7 +69,7 @@ type OrgNode struct {
 
 const (
 	appName    = "ldap-phonebook"
-	appVersion = "0.8"
+	appVersion = "0.9"
 	configFile = "ldap-phonebook.json"
 )
 
@@ -984,7 +984,7 @@ func onDepartmentSelected() {
 			log.Println("Ошибка преобразования:", err)
 			return
 		}
-		//		fmt.Printf("Текст родителя: %s\n", parentName)
+		fmt.Printf("Текст родителя: %s\n", parentName)
 	}
 	// Проверяем корень
 	var rootIter gtk.TreeIter
@@ -1004,10 +1004,10 @@ func onDepartmentSelected() {
 		}
 		//		fmt.Printf("Текст родителя: %s\n", parentName)
 	}
-	//	log.Printf("Путь элемента: %s->%s->%s\n", rootName, parentName, itemName)
+	log.Printf("Путь элемента: %s->%s->%s\n", rootName, parentName, itemName)
 
 	hasChildren := treeStore.IterHasChild(iter)
-	//	log.Printf("Элемент имеет дочерние элементы: %v\n", hasChildren)
+	log.Printf("Элемент имеет дочерние элементы: %v\n", hasChildren)
 
 	//treeStore.IterParent(&parentIter, iter)
 	//	log.Printf("Элемент является дочерним: %v\n", hasParent)
