@@ -221,7 +221,16 @@ EOF
 ldapmodify -h localhost -p 389 -D cn=admin,cn=config -w config_pass -f config.ldif
 ```
 
+## Добавление скриптом
+```
+ldapadd -h localhost -p 389 -c -D cn=admin,dc=mail,dc=local  -w 123456 -f add.ldif
+```
 
-
+## Рекурсивное удаление
+Пример удаления содержимого OU
+```
+ldapsearch -ZZ -W -D 'cn=Manager,dc=site,dc=fake' -b 'ou=people,dc=site,dc=fake' -s one  dn |\
+ grep dn: | cut -b 5- | ldapdelete -ZZ -W -D 'cn=Manager,dc=site,dc=fake'
+ ```
 
 

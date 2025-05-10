@@ -29,6 +29,7 @@ type Config struct {
 	BindPassword string `json:"bind_password"`
 	BaseDN       string `json:"base_dn"`
 	SocketFile   string `json:"socket_file"`
+	Debug        bool   `json:"debug_mode"`
 }
 
 var (
@@ -145,6 +146,7 @@ func loadConfig() {
 			BindPassword: "",
 			BaseDN:       "dc=mail,dc=local",
 			SocketFile:   "/tmp/ldap-phonebook.sock",
+			Debug:        false,
 		}
 
 		configPath = filepath.Join(os.Getenv("HOME"), ".config", appName, configFile)
@@ -578,7 +580,7 @@ func showAboutDialog() {
 	authors = append(authors, "Maxim Izvekov (maximizvekov@yandex.ru)")
 	dialog.SetAuthors(authors)
 
-	dialog.SetComments("конфигурация: " + configPath)
+	dialog.SetComments("config_file: " + configPath)
 
 	dialog.Run()
 	dialog.Destroy()
@@ -738,10 +740,12 @@ func addResizableColumn(treeView *gtk.TreeView, title string, id int) {
 }
 
 func quotRemove(str string) string {
-	return strings.Replace(strings.Replace(str, "&#039;", "'", -1), "&quot;", "\"", -1)
+	return str
+	// return strings.Replace(strings.Replace(str, "&#039;", "'", -1), "&quot;", "\"", -1)
 }
 func quotAdd(str string) string {
-	return strings.Replace(strings.Replace(str, "'", "&#039;", -1), "\"", "&quot;", -1)
+	return str
+	// return strings.Replace(strings.Replace(str, "'", "&#039;", -1), "\"", "&quot;", -1)
 }
 func buildOrgTree(entries []*ldap.Entry) *OrgNode {
 	root := &OrgNode{
@@ -895,7 +899,8 @@ func loadLDAPData() {
 
 		// Добавляем организации и отделы
 		for _, entry := range sr.Entries {
-			orgName := quotRemove(entry.GetAttributeValue("o"))
+			orgName := entry.GetAttributeValue("o")
+			//			orgName := quotRemove(entry.GetAttributeValue("o"))
 			if orgName == "" {
 				continue
 			}
@@ -939,13 +944,6 @@ func onDepartmentSelected() {
 		return
 	}
 
-	// Определяем уровень вложенности
-	depth := path.GetDepth()
-
-	if depth <= 2 {
-		return
-	}
-
 	// Получаем модель
 	model, err = treeView.GetModel()
 	if err != nil {
@@ -965,6 +963,21 @@ func onDepartmentSelected() {
 	if err != nil {
 		return
 	}
+	if config.Debug {
+		fmt.Println("Выбран элемент: " + itemName)
+	}
+
+	// Определяем уровень вложенности
+	depth := path.GetDepth()
+
+	if config.Debug {
+		fmt.Printf("Уровень: %d\n", depth)
+	}
+
+	if depth <= 2 {
+		return
+	}
+
 	//	itemName, _ := value.GetString()
 
 	var rootName, parentName string
@@ -984,7 +997,9 @@ func onDepartmentSelected() {
 			log.Println("Ошибка преобразования:", err)
 			return
 		}
-		fmt.Printf("Текст родителя: %s\n", parentName)
+		if config.Debug {
+			fmt.Printf("Текст родителя: %s\n", parentName)
+		}
 	}
 	// Проверяем корень
 	var rootIter gtk.TreeIter
@@ -1004,10 +1019,14 @@ func onDepartmentSelected() {
 		}
 		//		fmt.Printf("Текст родителя: %s\n", parentName)
 	}
-	log.Printf("Путь элемента: %s->%s->%s\n", rootName, parentName, itemName)
+	if config.Debug {
+		fmt.Printf("Путь элемента: %s->%s->%s\n", rootName, parentName, itemName)
+	}
 
 	hasChildren := treeStore.IterHasChild(iter)
-	log.Printf("Элемент имеет дочерние элементы: %v\n", hasChildren)
+	if config.Debug {
+		fmt.Printf("Элемент имеет дочерние элементы: %v\n", hasChildren)
+	}
 
 	//treeStore.IterParent(&parentIter, iter)
 	//	log.Printf("Элемент является дочерним: %v\n", hasParent)
@@ -1015,17 +1034,17 @@ func onDepartmentSelected() {
 	if depth == 4 {
 		// Ищем людей в отделе
 		//		searchPeople(quotAdd("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))"))
-		searchPeople("(ou=" + itemName + ")")
-		//		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
+		//		searchPeople("(ou=" + itemName + ")")
+		searchPeople("(&(o=" + rootName + ", " + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && !hasChildren {
 		// Ищем людей в отделе
-		//		searchPeople(quotAdd("(&(o=" + parentName + ")(ou=" + itemName + "))"))
-		searchPeople("(ou=" + itemName + ")")
-		//		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
+		//searchPeople(quotAdd("(&(o=" + parentName + ")(ou=" + itemName + "))"))
+		//searchPeople("(ou=" + itemName + ")")
+		searchPeople("(&(o=" + parentName + ")(ou=" + itemName + "))")
 	} else if depth == 3 && hasChildren {
 		// Ищем людей в отделе
 		searchPeople("(o=" + parentName + ", " + itemName + ")")
-		//		searchPeople(quotAdd("(o=" + parentName + ", " + itemName + ")"))
+		//searchPeople(quotAdd("(o=" + parentName + ", " + itemName + ")"))
 	}
 
 }
@@ -1056,14 +1075,12 @@ func performSearch() {
 	}
 }
 
-func searchPeople(text string) int {
+func searchPeople(filter string) int {
 
-	fmt.Print(text)
+	if config.Debug {
+		fmt.Println(filter)
+	}
 
-	//	text = quotAdd(text)
-	//	fmt.Print(text)
-
-	filter := text
 	// Подключаемся к LDAP серверу
 	l, err := ldap.Dial("tcp", config.LDAPServer)
 	if err != nil {
@@ -1121,7 +1138,8 @@ func searchPeople(text string) int {
 			item.OU = quotRemove(entry.GetAttributeValue("ou"))
 			item.L = entry.GetAttributeValue("l")
 			item.Title = entry.GetAttributeValue("title")
-			item.O = quotRemove(entry.GetAttributeValue("o"))
+			//			item.O = quotRemove(entry.GetAttributeValue("o"))
+			item.O = entry.GetAttributeValue("o")
 			item.TelephoneNumber = entry.GetAttributeValue("telephoneNumber")
 			item.PostalAddress = quotRemove(entry.GetAttributeValue("postalAddress"))
 
@@ -1357,6 +1375,11 @@ func setWindowIcon() {
 }
 
 func selectByPath(pathStr string) {
+
+	if config.Debug {
+		fmt.Println(pathStr)
+	}
+
 	parts := strings.Split(pathStr, ":")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
