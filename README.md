@@ -233,4 +233,8 @@ ldapsearch -ZZ -W -D 'cn=Manager,dc=site,dc=fake' -b 'ou=people,dc=site,dc=fake'
  grep dn: | cut -b 5- | ldapdelete -ZZ -W -D 'cn=Manager,dc=site,dc=fake'
  ```
 
+# Перекодирование файла
 
+```
+iconv -f CP1251 -t UTF-8 -o <outfile> <infile>
+```

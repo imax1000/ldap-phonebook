@@ -4,5 +4,5 @@
   "bind_password": "",
   "base_dn": "dc=mail,dc=local",
   "socket_file": "/tmp/ldap-phonebook.sock",
-  "debug_mode": true
+  "debug_mode": false
 }
