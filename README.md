@@ -34,11 +34,10 @@
 
 
 2. Поиск сотрудников
-- Поиск по ФИО, email, телефону (достаточно части строки).
-Запуск по кнопке «Поиск» или нажатию Enter.
-Поддержка регистронезависимого поиска.
-Возможность поиска при неправильной раскладке клавиатуры.
-
+- Поиск по ФИО, email, телефону, отделу, должности (достаточно части строки). Поисковый запрос может содержать пробел
+- Запуск по кнопке «Поиск» или нажатию Enter.
+- Поддержка регистронезависимого поиска.
+- Возможность поиска при неправильной раскладке клавиатуры.
 - Результаты поиска в виде таблица с колонками: ФИО, Email, Телефон, Отдел, Организация.
 Возможность изменения ширины колонок перетаскиванием.
 
@@ -136,8 +135,7 @@ mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 ```
 Создайте архив с вашими файлами и поместите его в SOURCES:
 ```bash
-tar czvf ~/rpmbuild/SOURCES/ldap-phonebook.tar.gz \
-    ldap-phonebook ldap-phonebook.ico ldap-phonebook.json
+tar czvf ~/rpmbuild/SOURCES/ldap-phonebook.tar.gz ldap-phonebook ldap-phonebook.ico ldap-phonebook.json
 ```
 Поместите файл ldap-phonebook.spec в ~/rpmbuild/SPECS/ldap-phonebook.spec
 
