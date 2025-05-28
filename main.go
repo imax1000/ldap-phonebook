@@ -70,7 +70,7 @@ type OrgNode struct {
 
 const (
 	appName    = "ldap-phonebook"
-	appVersion = "0.9"
+	appVersion = "0.9.1"
 	configFile = "ldap-phonebook.json"
 )
 
@@ -1059,20 +1059,50 @@ func performSearch() {
 		return
 	}
 
-	// Формируем фильтр для поиска
-	filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
+	// Экранируем введенное значение
+	escapedText := escapeLDAPValue(text)
+
+	filter := fmt.Sprintf("(|(cn=*%s*)(mail=%s*)(telephoneNumber=%s*)(ou=*%s*)(title=*%s*))",
+		escapedText, escapedText, escapedText, escapedText, escapedText)
 
 	// Ищем людей
 	if searchPeople(filter) == 0 {
 		text = ConvertString(text)
 		if len(text) > 0 {
-			// Формируем фильтр для поиска
-			filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*))", text, text, text)
+
+			// Экранируем введенное значение
+			escapedText := escapeLDAPValue(text)
+
+			filter := fmt.Sprintf("(|(cn=*%s*)(mail=%s*)(telephoneNumber=%s*)(ou=*%s*)(title=*%s*))",
+				escapedText, escapedText, escapedText, escapedText, escapedText)
 
 			// Ищем людей
 			searchPeople(filter)
 		}
 	}
+
+}
+
+func HasSpace(text string) bool {
+	for _, ch := range text {
+		if ch == ' ' {
+			return true
+		}
+	}
+	return false
+}
+func escapeLDAPValue(input string) string {
+	// Экранируем специальные символы в LDAP-фильтрах
+	escaped := ""
+	for _, r := range input {
+		switch r {
+		case '\\', '*', '(', ')', '\x00':
+			escaped += fmt.Sprintf("\\%02x", r)
+		default:
+			escaped += string(r)
+		}
+	}
+	return escaped
 }
 
 func searchPeople(filter string) int {
@@ -1522,6 +1552,7 @@ var ConvertMap = map[rune]rune{
 	'M':  'Ь',
 	'<':  'Б',
 	'>':  'Ю',
+	' ':  ' ',
 }
 
 func ConvertString(in string) string {
