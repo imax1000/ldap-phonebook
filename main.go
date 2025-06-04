@@ -70,7 +70,7 @@ type OrgNode struct {
 
 const (
 	appName    = "ldap-phonebook"
-	appVersion = "0.9.1"
+	appVersion = "0.9.2"
 	configFile = "ldap-phonebook.json"
 )
 
@@ -887,10 +887,6 @@ func loadLDAPData() {
 			return
 		}
 
-		if err != nil {
-			return
-		}
-
 		// Очищаем дерево
 		store.Clear()
 		/////////////////////////////////////////////////////////////////////////////////////
@@ -1062,7 +1058,7 @@ func performSearch() {
 	// Экранируем введенное значение
 	escapedText := escapeLDAPValue(text)
 
-	filter := fmt.Sprintf("(|(cn=*%s*)(mail=%s*)(telephoneNumber=%s*)(ou=*%s*)(title=*%s*))",
+	filter := fmt.Sprintf("(|(cn=*%s*)(mail=*%s*)(telephoneNumber=*%s*)(ou=*%s*)(title=*%s*))",
 		escapedText, escapedText, escapedText, escapedText, escapedText)
 
 	// Ищем людей
